@@ -1,0 +1,32 @@
+{
+  "name": "ai-screener-agent",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "LiveKit voice agent that runs AI screening interviews in Bahasa Indonesia",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx src/main.ts dev",
+    "start": "node dist/main.js start",
+    "download-files": "tsx src/main.ts download-files",
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test src/**/*.test.ts"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@livekit/agents": "1.9.4",
+    "@livekit/agents-plugin-anthropic": "1.9.4",
+    "@livekit/agents-plugin-deepgram": "1.9.4",
+    "@livekit/agents-plugin-elevenlabs": "1.9.4",
+    "@livekit/agents-plugin-silero": "1.9.4",
+    "dotenv": "^18.0.9",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2"
+  }
+}

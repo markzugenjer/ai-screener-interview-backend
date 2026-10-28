@@ -1,0 +1,14 @@
+# Secrets
+.env
+.env.*
+!.env.example
+agent/.env
+
+# Build output and data
+/bin/
+/data/
+agent/node_modules/
+agent/dist/
+*.log
+coverage.out
+.DS_Store

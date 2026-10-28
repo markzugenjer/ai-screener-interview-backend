@@ -1,0 +1,51 @@
+# Local development: Postgres + API + scoring worker + voice agent.
+# Run the Next.js frontend separately (see its README).
+#
+#   cp .env.example .env && cp agent/.env.example agent/.env   # then fill both in
+#   docker compose up --build
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: screener
+      POSTGRES_PASSWORD: screener
+      POSTGRES_DB: screener
+    ports: ["5432:5432"]
+    volumes: [db:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U screener"]
+      interval: 3s
+      retries: 20
+
+  api:
+    build: .
+    command: ["/app/api"]
+    env_file: .env
+    environment:
+      DATABASE_URL: postgres://screener:screener@db:5432/screener?sslmode=disable
+      STORAGE_DIR: /data/files
+    ports: ["8080:8080"]
+    volumes: [files:/data/files]
+    depends_on:
+      db: { condition: service_healthy }
+
+  worker:
+    build: .
+    command: ["/app/worker"]
+    env_file: .env
+    environment:
+      DATABASE_URL: postgres://screener:screener@db:5432/screener?sslmode=disable
+    depends_on:
+      db: { condition: service_healthy }
+
+  agent:
+    build: ./agent
+    env_file: agent/.env
+    environment:
+      API_INTERNAL_URL: http://api:8080
+    depends_on: [api]
+
+volumes:
+  db:
+  files:
