@@ -23,8 +23,12 @@ type Config struct {
 	CookieSecure   bool          // send cookies only over HTTPS
 	SessionTTL     time.Duration // how long a login lasts
 	AllowedOrigins []string      // origins allowed to send state-changing requests
-	TrustProxy     bool          // trust X-Forwarded-For (only behind your own proxy)
-	InternalSecret string        // shared secret for the voice agent -> API calls
+	// SameHostOrigin also accepts an Origin equal to the forwarded host the request
+	// arrived on. Only for when the API listens privately behind our own Next.js
+	// server (single-container deploy), which sets X-Forwarded-Host/Proto.
+	SameHostOrigin bool
+	TrustProxy     bool   // trust X-Forwarded-For (only behind your own proxy)
+	InternalSecret string // shared secret for the voice agent -> API calls
 	MaxResumeBytes int64
 
 	// Storage for encrypted files (resumes, audio)
@@ -85,6 +89,7 @@ func Load() (*Config, error) {
 		RunWorkerInAPI:   getBool("RUN_WORKER_IN_API", false),
 		FeedbackLanguage: get("FEEDBACK_LANGUAGE", "English"),
 		InlineJobs:       getBool("INLINE_JOBS", false),
+		SameHostOrigin:   getBool("ALLOW_SAME_HOST_ORIGIN", false),
 		VCSStorageURL:    get("VCS_STORAGE_URL", ""),
 		VCSStorageToken:  get("VCS_STORAGE_TOKEN", ""),
 	}

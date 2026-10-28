@@ -19,7 +19,7 @@ services:
       retries: 20
 
   api:
-    build: .
+    build: { context: ., dockerfile: Dockerfile.api }
     command: ["/app/api"]
     env_file: .env
     environment:
@@ -31,7 +31,7 @@ services:
       db: { condition: service_healthy }
 
   worker:
-    build: .
+    build: { context: ., dockerfile: Dockerfile.api }
     command: ["/app/worker"]
     env_file: .env
     environment:

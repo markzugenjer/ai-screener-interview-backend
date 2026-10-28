@@ -1,10 +1,13 @@
-.PHONY: up tidy dev worker test agent-dev agent-test admin
+.PHONY: up vcs-deploy tidy dev worker test agent-dev agent-test admin
 
 tidy: ## download dependencies and create go.sum (run once after cloning)
 	go mod tidy
 
 up: ## run API, worker and voice agent in one terminal (AGENT=0 skips the agent)
 	AGENT=$(or $(AGENT),1) ./scripts/dev.sh
+
+vcs-deploy: ## deploy website + API to VCS project dtritama/dicy-talks (run on your Mac)
+	./scripts/vcs-deploy.sh
 
 dev: ## run the API (reads .env)
 	set -a && . ./.env && set +a && go run ./cmd/api

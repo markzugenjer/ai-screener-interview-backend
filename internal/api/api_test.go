@@ -388,3 +388,36 @@ func TestSecurityHeaders(t *testing.T) {
 		}
 	}
 }
+
+func TestSameHostOrigin(t *testing.T) {
+	req := func(host, proto string) *http.Request {
+		r, _ := http.NewRequest("POST", "http://127.0.0.1:8081/api/v1/auth/login", nil)
+		r.Header.Set("X-Forwarded-Host", host)
+		r.Header.Set("X-Forwarded-Proto", proto)
+		return r
+	}
+	off := &API{cfg: &config.Config{Env: "production", AllowedOrigins: []string{"https://listed.example"}}}
+	if off.originAllowed(req("app.example", "https"), "https://app.example") {
+		t.Fatal("same-host origin must be off by default")
+	}
+	if !off.originAllowed(req("", ""), "https://listed.example") {
+		t.Fatal("configured origin must pass")
+	}
+	on := &API{cfg: &config.Config{Env: "production", SameHostOrigin: true}}
+	cases := []struct {
+		host, proto, origin string
+		want                bool
+	}{
+		{"app.example", "https", "https://app.example", true},
+		{"app.example", "https,http", "https://app.example", true},
+		{"app.example", "https", "https://evil.example", false},
+		{"app.example", "http", "http://app.example", false}, // no plain http in production
+		{"", "https", "https://", false},
+		{"app.example", "ftp", "ftp://app.example", false},
+	}
+	for _, c := range cases {
+		if got := on.originAllowed(req(c.host, c.proto), c.origin); got != c.want {
+			t.Errorf("%+v: got %v", c, got)
+		}
+	}
+}

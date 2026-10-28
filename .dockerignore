@@ -1,4 +1,4 @@
-# Keep the Go image small and free of secrets.
+# Keep the image small and free of secrets.
 .git
 .env
 .env.*

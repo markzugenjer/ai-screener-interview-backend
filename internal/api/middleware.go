@@ -120,7 +120,7 @@ func (a *API) csrf(next http.Handler) http.Handler {
 				origin = ref.Scheme + "://" + ref.Host
 			}
 		}
-		if origin != "" && !slices.Contains(a.cfg.AllowedOrigins, strings.TrimRight(origin, "/")) {
+		if origin != "" && !a.originAllowed(r, strings.TrimRight(origin, "/")) {
 			writeError(w, http.StatusForbidden, "bad_origin", "Request origin is not allowed.")
 			return
 		}
@@ -206,4 +206,25 @@ func (a *API) audit(r *http.Request, action, entity, entityID string, detail map
 	if err := a.store.Audit(context.WithoutCancel(r.Context()), e); err != nil {
 		a.log.Warn("audit write failed", "err", err)
 	}
+}
+
+// originAllowed: the configured origins, plus (single-container deploys) the
+// exact origin the request was served on, as reported by our own front server.
+func (a *API) originAllowed(r *http.Request, origin string) bool {
+	if slices.Contains(a.cfg.AllowedOrigins, origin) {
+		return true
+	}
+	if !a.cfg.SameHostOrigin {
+		return false
+	}
+	host := r.Header.Get("X-Forwarded-Host")
+	proto := r.Header.Get("X-Forwarded-Proto")
+	if i := strings.IndexByte(proto, ','); i >= 0 {
+		proto = proto[:i]
+	}
+	proto = strings.TrimSpace(proto)
+	if host == "" || (proto != "https" && proto != "http") || (proto == "http" && a.cfg.IsProduction()) {
+		return false
+	}
+	return origin == proto+"://"+host
 }

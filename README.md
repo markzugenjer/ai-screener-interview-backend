@@ -55,21 +55,28 @@ go run ./cmd/admin promote -role admin -email sinta@company.com
 
 ## Deploying to VCS (FDC Vibe Code Store)
 
-VCS runs HTTP services only and gives a container CPU only while a request is open,
-so the pieces are split like this:
+The VCS project **dtritama/dicy-talks** runs the website and the API in **one container**
+(the root `Dockerfile`): Next.js serves the public port, the Go API listens privately on
+`127.0.0.1:8081`, and Next forwards `/api/v1/*` (and, for the voice agent, `/internal/*`)
+to it. The website is downloaded from GitHub at the commit pinned in `ARG FRONTEND_REF`.
+
+```bash
+make vcs-deploy        # on a machine that can reach VCS (your Mac)
+```
+
+The script pins the latest website commit, signs in to VCS (approve the code in your
+browser), binds the folder to the project, pushes `.env.production` on the first deploy
+and deploys. `.env.production` holds the production settings and is never committed.
 
 | Piece | Where | Notes |
 |---|---|---|
-| Go API (`cmd/api`) | VCS project | `INLINE_JOBS=true`: scoring runs inside the request that waits for it (the feedback page calls `POST /api/v1/interviews/{id}/score`, re-score runs inline too). No separate worker. |
-| Postgres | VCS (automatic) | VCS injects `DATABASE_URL` (runtime role) and `DATABASE_OWNER_URL`; migrations run with the owner URL at startup. |
-| Resumes | VCS object storage | Used automatically when `VCS_STORAGE_URL` / `VCS_STORAGE_TOKEN` are present; files are still AES-GCM encrypted before upload. |
-| Voice agent (`agent/`) | LiveKit Cloud | A long-lived LiveKit worker, not an HTTP service. `cd agent && lk agent create --secrets-file .env.production`, with `API_INTERNAL_URL` set to the API's public VCS URL. |
+| Website + API | VCS `dicy-talks` | Scoring runs inline (`INLINE_JOBS`): the feedback page calls `POST /api/v1/interviews/{id}/score` and keeps the request open, because VCS gives no CPU between requests. Readiness: `/healthz` (website) → `/readyz` (API, database). |
+| Postgres | VCS (automatic) | `DATABASE_URL` (runtime role) and `DATABASE_OWNER_URL` (migrations at startup). |
+| Resumes | VCS object storage | Used when `VCS_STORAGE_URL` / `VCS_STORAGE_TOKEN` are present; still AES-GCM encrypted before upload. |
+| Voice agent (`agent/`) | LiveKit Cloud | Not an HTTP service. `cd agent && lk agent create --secrets-file .env.production` with `API_INTERNAL_URL` = the VCS URL and the same `INTERNAL_API_SECRET`. |
 
-Production settings for the API (pushed with `vcs env push`, never committed):
-`APP_ENV=production`, `COOKIE_SECURE=true`, `INLINE_JOBS=true`, `APP_ENCRYPTION_KEY`,
-`INTERNAL_API_SECRET`, `PUBLIC_URL` (the frontend's URL), `LIVEKIT_URL`, `LIVEKIT_API_KEY`,
-`LIVEKIT_API_SECRET`, `ANTHROPIC_API_KEY`, and `ADMIN_EMAIL` / `ADMIN_PASSWORD` / `ADMIN_NAME`
-for the first recruiter account. Demo jobs are not seeded in production unless `SEED_DEMO=true`.
+`Dockerfile.api` is the Go-only image used by `docker compose`. Demo jobs are not seeded in
+production unless `SEED_DEMO=true`.
 
 ## How an interview works
 
