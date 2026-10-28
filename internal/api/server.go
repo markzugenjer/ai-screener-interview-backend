@@ -2,13 +2,16 @@
 package api
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/markzugenjer/ai-screener-interview-backend/internal/config"
 	"github.com/markzugenjer/ai-screener-interview-backend/internal/security"
 	"github.com/markzugenjer/ai-screener-interview-backend/internal/storage"
 	"github.com/markzugenjer/ai-screener-interview-backend/internal/store"
+	"github.com/markzugenjer/ai-screener-interview-backend/internal/worker"
 )
 
 type API struct {
@@ -17,6 +20,10 @@ type API struct {
 	enc   *security.Encryptor
 	files storage.Files
 	log   *slog.Logger
+
+	// jobs, when set, runs queued jobs inside the request that needs the result
+	// (INLINE_JOBS on request-based hosts). Nil means a background worker does it.
+	jobs *worker.Worker
 
 	globalLimit    *security.RateLimiter
 	authLimit      *security.RateLimiter
@@ -30,6 +37,25 @@ func New(cfg *config.Config, st store.Store, enc *security.Encryptor, files stor
 		authLimit:      security.NewRateLimiter(10, 5),
 		interviewLimit: security.NewRateLimiter(20, 10),
 	}
+}
+
+// WithInlineJobs makes the API process queued jobs (scoring) itself, inside the
+// requests that wait for them, instead of relying on a background worker.
+func (a *API) WithInlineJobs(w *worker.Worker) *API {
+	a.jobs = w
+	return a
+}
+
+// runJobs processes queued jobs while the current request stays open. It is
+// detached from the client's cancellation so a closed tab cannot abort a
+// half-written score, but bounded so the request always ends.
+func (a *API) runJobs(r *http.Request) {
+	if a.jobs == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 4*time.Minute+30*time.Second)
+	defer cancel()
+	a.jobs.Drain(ctx, 2)
 }
 
 // Handler builds the route table (Go 1.22+ method + path patterns) and wraps it in middleware.
@@ -61,6 +87,7 @@ func (a *API) Handler() http.Handler {
 	mux.Handle("POST /api/v1/interviews/{id}/finish", iv(requireUser(a.finishInterview)))
 	mux.HandleFunc("POST /api/v1/interviews/{id}/events", requireUser(a.interviewEvent))
 	mux.HandleFunc("GET /api/v1/interviews/{id}/feedback", requireUser(a.feedback))
+	mux.Handle("POST /api/v1/interviews/{id}/score", iv(requireUser(a.scoreNow)))
 
 	// Recruiter / admin
 	mux.HandleFunc("GET /api/v1/admin/stats", requireStaff(a.adminStats))

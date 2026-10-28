@@ -167,6 +167,10 @@ func (a *API) adminRescore(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.audit(r, "result.rescore", "interview", iv.ID, nil)
+	a.runJobs(r)
+	if fresh, err := a.store.GetInterview(r.Context(), iv.ID); err == nil {
+		iv = fresh
+	}
 	writeJSON(w, http.StatusAccepted, map[string]any{"interview": toInterviewDTO(iv)})
 }
 

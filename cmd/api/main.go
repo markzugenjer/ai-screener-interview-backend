@@ -43,7 +43,7 @@ func run() error {
 	}
 	defer st.Close()
 
-	if os.Getenv("SEED_DEMO") != "false" {
+	if cfg.SeedDemo {
 		if added, err := seed.Demo(ctx, st); err != nil {
 			log.Error("seed demo jobs", "err", err)
 		} else if added {
@@ -58,15 +58,28 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	files, err := storage.NewLocal(cfg.StorageDir, enc)
-	if err != nil {
+	var files storage.Files
+	if cfg.VCSStorageURL != "" {
+		if files, err = storage.NewVCS(cfg.VCSStorageURL, cfg.VCSStorageToken, enc); err != nil {
+			return err
+		}
+		log.Info("file storage: VCS object storage")
+	} else if files, err = storage.NewLocal(cfg.StorageDir, enc); err != nil {
 		return err
 	}
 
-	// The in-memory store lives inside this process, so its worker must too.
-	if cfg.RunWorkerInAPI || cfg.Store == "memory" {
-		w := &worker.Worker{Store: st, LLM: llm.NewAnthropic(cfg.AnthropicAPIKey, cfg.AnthropicModel, cfg.AnthropicBaseURL),
-			Language: cfg.FeedbackLanguage, Log: log.With("component", "worker")}
+	w := &worker.Worker{Store: st, LLM: llm.NewAnthropic(cfg.AnthropicAPIKey, cfg.AnthropicModel, cfg.AnthropicBaseURL),
+		Language: cfg.FeedbackLanguage, Log: log.With("component", "worker")}
+	handler := api.New(cfg, st, enc, files, log)
+	writeTimeout := 60 * time.Second
+	switch {
+	case cfg.InlineJobs:
+		// Request-based host: score inside the requests that wait for it.
+		handler.WithInlineJobs(w)
+		writeTimeout = 5 * time.Minute
+		log.Info("jobs run inline (INLINE_JOBS=true)")
+	case cfg.RunWorkerInAPI || cfg.Store == "memory":
+		// The in-memory store lives inside this process, so its worker must too.
 		go w.Run(ctx)
 	}
 	if cfg.AnthropicAPIKey == "" {
@@ -78,10 +91,10 @@ func run() error {
 
 	srv := &http.Server{
 		Addr:              cfg.HTTPAddr,
-		Handler:           api.New(cfg, st, enc, files, log).Handler(),
+		Handler:           handler.Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       60 * time.Second,
-		WriteTimeout:      60 * time.Second,
+		WriteTimeout:      writeTimeout,
 		IdleTimeout:       120 * time.Second,
 		MaxHeaderBytes:    64 << 10,
 	}

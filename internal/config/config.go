@@ -42,8 +42,24 @@ type Config struct {
 	AnthropicBaseURL string
 
 	// Worker
-	RunWorkerInAPI   bool // run the scoring worker inside the API process (handy for local dev)
+	RunWorkerInAPI bool // run the scoring worker inside the API process (handy for local dev)
+	// InlineJobs processes queued jobs inside the HTTP request that needs them
+	// (feedback page, re-score). For request-based hosts such as VCS / Cloud Run,
+	// where CPU is not available between requests, so a background loop is unreliable.
+	InlineJobs       bool
 	FeedbackLanguage string
+
+	// MigrationDatabaseURL is the role that owns the schema (VCS: DATABASE_OWNER_URL).
+	// Runtime queries use DatabaseURL.
+	MigrationDatabaseURL string
+
+	// VCS object storage (set by the platform). When present, files go there
+	// instead of the local disk, which is wiped on every restart.
+	VCSStorageURL   string
+	VCSStorageToken string
+
+	// SeedDemo inserts the two demo jobs. Defaults to on outside production.
+	SeedDemo bool
 }
 
 func Load() (*Config, error) {
@@ -68,7 +84,12 @@ func Load() (*Config, error) {
 		AnthropicBaseURL: get("ANTHROPIC_BASE_URL", "https://api.anthropic.com"),
 		RunWorkerInAPI:   getBool("RUN_WORKER_IN_API", false),
 		FeedbackLanguage: get("FEEDBACK_LANGUAGE", "English"),
+		InlineJobs:       getBool("INLINE_JOBS", false),
+		VCSStorageURL:    get("VCS_STORAGE_URL", ""),
+		VCSStorageToken:  get("VCS_STORAGE_TOKEN", ""),
 	}
+	c.MigrationDatabaseURL = get("MIGRATION_DATABASE_URL", get("DATABASE_OWNER_URL", c.DatabaseURL))
+	c.SeedDemo = getBool("SEED_DEMO", !c.IsProduction())
 
 	origins := get("ALLOWED_ORIGINS", c.PublicURL)
 	for _, o := range strings.Split(origins, ",") {

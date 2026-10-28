@@ -3,6 +3,7 @@ package app
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"os"
 
@@ -26,13 +27,28 @@ func OpenStore(ctx context.Context, cfg *config.Config, log *slog.Logger) (store
 		log.Warn("using in-memory store: all data is lost on restart (development only)")
 		return memory.New(), nil
 	}
+	// Schema changes run as the owning role; the app then queries as the runtime
+	// role. Locally both are the same URL.
+	if cfg.MigrationDatabaseURL != cfg.DatabaseURL {
+		owner, err := postgres.Open(ctx, cfg.MigrationDatabaseURL)
+		if err != nil {
+			return nil, fmt.Errorf("migration database: %w", err)
+		}
+		err = owner.Migrate(ctx)
+		owner.Close()
+		if err != nil {
+			return nil, err
+		}
+	}
 	db, err := postgres.Open(ctx, cfg.DatabaseURL)
 	if err != nil {
 		return nil, err
 	}
-	if err := db.Migrate(ctx); err != nil {
-		db.Close()
-		return nil, err
+	if cfg.MigrationDatabaseURL == cfg.DatabaseURL {
+		if err := db.Migrate(ctx); err != nil {
+			db.Close()
+			return nil, err
+		}
 	}
 	return db, nil
 }

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sync/atomic"
 	"time"
 
 	"github.com/markzugenjer/ai-screener-interview-backend/internal/domain"
@@ -30,11 +31,49 @@ type Worker struct {
 	Language string
 	Log      *slog.Logger
 	Poll     time.Duration
+
+	lastCleanup atomic.Int64
 }
 
 func EnqueueScoring(ctx context.Context, s store.Store, interviewID string) error {
 	b, _ := json.Marshal(ScorePayload{InterviewID: interviewID})
 	return s.Enqueue(ctx, KindScoreInterview, string(b), time.Now())
+}
+
+// Drain processes up to max ready jobs right now and returns how many it handled.
+// It is the request-scoped alternative to Run for hosts that only give a
+// container CPU while a request is open (VCS / Cloud Run): the HTTP handler that
+// needs a result calls Drain and keeps the request open until it finishes.
+// Claiming uses FOR UPDATE SKIP LOCKED, so concurrent requests never score the
+// same interview twice, and a job abandoned mid-way is reclaimed after 10 minutes.
+func (w *Worker) Drain(ctx context.Context, max int) int {
+	w.cleanupSessions(ctx)
+	n := 0
+	for n < max && ctx.Err() == nil {
+		job, err := w.Store.ClaimJob(ctx)
+		if errors.Is(err, store.ErrNotFound) {
+			break
+		}
+		if err != nil {
+			w.Log.Error("claim job", "err", err)
+			break
+		}
+		w.handle(ctx, job)
+		n++
+	}
+	return n
+}
+
+// cleanupSessions deletes expired sessions at most once an hour per process.
+func (w *Worker) cleanupSessions(ctx context.Context) {
+	now := time.Now().Unix()
+	last := w.lastCleanup.Load()
+	if now-last < 3600 || !w.lastCleanup.CompareAndSwap(last, now) {
+		return
+	}
+	if n, err := w.Store.DeleteExpiredSessions(ctx); err == nil && n > 0 {
+		w.Log.Info("deleted expired sessions", "count", n)
+	}
 }
 
 // Run blocks until ctx is cancelled.

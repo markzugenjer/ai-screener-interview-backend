@@ -1,0 +1,11 @@
+# Keep the Go image small and free of secrets.
+.git
+.env
+.env.*
+!.env.example
+agent/
+bin/
+data/
+*.log
+coverage.out
+.DS_Store

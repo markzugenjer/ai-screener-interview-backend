@@ -285,3 +285,20 @@ func firstName(full string) string {
 	}
 	return "Candidate"
 }
+
+// scoreNow is called by the feedback page while an interview waits for its score.
+// With inline jobs it scores right here (the page shows "scoring…" meanwhile);
+// otherwise the background worker does it and this just reports the status.
+func (a *API) scoreNow(w http.ResponseWriter, r *http.Request) {
+	iv := a.loadOwnInterview(w, r, true)
+	if iv == nil {
+		return
+	}
+	if iv.Status == domain.InterviewCompleted {
+		a.runJobs(r)
+		if fresh, err := a.store.GetInterview(r.Context(), iv.ID); err == nil {
+			iv = fresh
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"interview": toInterviewDTO(iv)})
+}

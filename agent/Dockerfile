@@ -1,3 +1,5 @@
+# Voice agent image. Hosted on LiveKit Cloud (VCS only runs HTTP services):
+#   cd agent && lk agent create --secrets-file .env.production
 FROM node:22-slim AS build
 WORKDIR /app
 RUN corepack enable
@@ -13,7 +15,10 @@ ENV NODE_ENV=production
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY package.json ./
-# Downloads the VAD model weights into the image so startup is fast.
-RUN node dist/main.js download-files || true
+# Download the VAD / turn-detector model weights into the image as the user that
+# runs the agent (so it can read its own cache) — startup is then fast.
+ENV HOME=/home/node
+RUN chown -R node:node /app
 USER node
+RUN node dist/main.js download-files
 CMD ["node", "dist/main.js", "start"]

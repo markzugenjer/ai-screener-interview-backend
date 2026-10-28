@@ -53,6 +53,24 @@ make admin EMAIL=sinta@company.com NAME="Sinta Dewi"          # prompts for a pa
 go run ./cmd/admin promote -role admin -email sinta@company.com
 ```
 
+## Deploying to VCS (FDC Vibe Code Store)
+
+VCS runs HTTP services only and gives a container CPU only while a request is open,
+so the pieces are split like this:
+
+| Piece | Where | Notes |
+|---|---|---|
+| Go API (`cmd/api`) | VCS project | `INLINE_JOBS=true`: scoring runs inside the request that waits for it (the feedback page calls `POST /api/v1/interviews/{id}/score`, re-score runs inline too). No separate worker. |
+| Postgres | VCS (automatic) | VCS injects `DATABASE_URL` (runtime role) and `DATABASE_OWNER_URL`; migrations run with the owner URL at startup. |
+| Resumes | VCS object storage | Used automatically when `VCS_STORAGE_URL` / `VCS_STORAGE_TOKEN` are present; files are still AES-GCM encrypted before upload. |
+| Voice agent (`agent/`) | LiveKit Cloud | A long-lived LiveKit worker, not an HTTP service. `cd agent && lk agent create --secrets-file .env.production`, with `API_INTERNAL_URL` set to the API's public VCS URL. |
+
+Production settings for the API (pushed with `vcs env push`, never committed):
+`APP_ENV=production`, `COOKIE_SECURE=true`, `INLINE_JOBS=true`, `APP_ENCRYPTION_KEY`,
+`INTERNAL_API_SECRET`, `PUBLIC_URL` (the frontend's URL), `LIVEKIT_URL`, `LIVEKIT_API_KEY`,
+`LIVEKIT_API_SECRET`, `ANTHROPIC_API_KEY`, and `ADMIN_EMAIL` / `ADMIN_PASSWORD` / `ADMIN_NAME`
+for the first recruiter account. Demo jobs are not seeded in production unless `SEED_DEMO=true`.
+
 ## How an interview works
 
 1. A candidate registers (name, email, password, WhatsApp, resume) and starts an interview for an open job.
