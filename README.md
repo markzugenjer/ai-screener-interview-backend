@@ -1,6 +1,6 @@
 # AI Screener Interview — Backend
 
-Go API, scoring worker and TypeScript voice agent for **Nara**, an AI voice interviewer that runs
+Go API, scoring worker and TypeScript voice agent for **Dicy**, the AI voice interviewer at **FDC Dental Clinic**. It runs
 first-round screening interviews in Bahasa Indonesia, scores them, and lets recruiters filter results.
 
 Frontend: [ai-screener-interview-frontend](https://github.com/markzugenjer/ai-screener-interview-frontend)

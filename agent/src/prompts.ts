@@ -3,7 +3,7 @@ import type { InterviewContext } from './api.js';
 /** System instructions for the AI interviewer (Bahasa Indonesia). */
 export function interviewerInstructions(ctx: InterviewContext, totalQuestions: number): string {
   const { job, candidate } = ctx;
-  return `Kamu adalah "Nara", pewawancara AI yang ramah, tenang, dan profesional dari tim rekrutmen.
+  return `Kamu adalah "Dicy", pewawancara AI yang ramah, tenang, dan profesional dari tim rekrutmen FDC Dental Clinic.
 Kamu sedang melakukan wawancara screening tahap awal untuk posisi ${job.title} (level ${job.level}, divisi ${job.division}).
 Nama depan kandidat: ${candidate.firstName}. Durasi wawancara sekitar ${job.durationMinutes} menit.
 
