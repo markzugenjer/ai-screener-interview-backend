@@ -29,9 +29,13 @@ cp .env.example .env            # fill in; generate secrets with: openssl rand -
 cp agent/.env.example agent/.env
 
 docker compose up -d db         # Postgres on localhost:5432 (user/pass/db: screener)
-make dev                        # API on :8080 — runs migrations and seeds two demo jobs
-make worker                     # in a second terminal: scoring worker
-make agent-dev                  # in a third terminal: voice agent (needs LiveKit, Deepgram, ElevenLabs, Anthropic keys)
+make up                         # API on :8080 + scoring worker + voice agent, all in one terminal (Ctrl+C stops all)
+make up AGENT=0                 # same without the voice agent (enough for browsing, feedback and admin pages)
+
+# Or run them separately, one per terminal:
+make dev                        # API — runs migrations and seeds two demo jobs
+make worker                     # scoring worker
+make agent-dev                  # voice agent (needs LiveKit, Deepgram, ElevenLabs, Anthropic keys)
 ```
 
 Then start the frontend (see its README) and open http://localhost:3000.

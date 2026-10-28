@@ -9,6 +9,7 @@ agent/.env
 /data/
 agent/node_modules/
 agent/dist/
+agent/.models-ready
 *.log
 coverage.out
 .DS_Store
