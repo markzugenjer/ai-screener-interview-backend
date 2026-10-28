@@ -129,8 +129,9 @@ type fakeLLM struct{}
 func (fakeLLM) Model() string { return "fake" }
 func (fakeLLM) Complete(context.Context, string, string, int) (string, error) {
 	return `{"questions":[],"ratings":{"technical":4,"problemSolving":4,"communication":4,"motivation":5},
-	"notes":{},"recruiterSummary":"Strong junior.","candidateSummary":"Great job!","strengths":["Clear"],
-	"improvements":["More examples"],"tips":["Keep practicing"]}`, nil
+	"notes":{},"recruiterSummary":"Strong junior.",
+	"candidate":{"en":{"summary":"Great job!","strengths":["Clear"],"improvements":["More examples"],"tips":["Keep practicing"]},
+	"id":{"summary":"Kerja bagus!","strengths":["Jelas"],"improvements":["Lebih banyak contoh"],"tips":["Terus berlatih"]}}}`, nil
 }
 
 func TestFullCandidateAndRecruiterFlow(t *testing.T) {
@@ -258,6 +259,17 @@ func TestFullCandidateAndRecruiterFlow(t *testing.T) {
 	cancel()
 	if fb.Feedback == nil || fb.Feedback.Overall == 0 || fb.Feedback.Summary != "Great job!" {
 		t.Fatalf("feedback: %+v", fb.Feedback)
+	}
+	var fbID struct{ Feedback *candidateScoreDTO }
+	c.json("GET", "/api/v1/interviews/"+ivID+"/feedback?lang=id", nil, &fbID)
+	if fbID.Feedback == nil || fbID.Feedback.Summary != "Kerja bagus!" || fbID.Feedback.Tips[0] != "Terus berlatih" ||
+		!strings.HasPrefix(fbID.Feedback.Dimensions[3].Notes[0], "Berbicara sekitar") {
+		t.Fatalf("indonesian feedback: %+v", fbID.Feedback)
+	}
+	var mine struct{ Interviews []interviewDTO }
+	c.json("GET", "/api/v1/me/interviews?lang=id", nil, &mine)
+	if len(mine.Interviews) == 0 || mine.Interviews[0].Summary != "Kerja bagus!" {
+		t.Fatalf("indonesian list summary: %+v", mine.Interviews)
 	}
 	var rawFb map[string]any
 	c.json("GET", "/api/v1/interviews/"+ivID+"/feedback", nil, &rawFb)

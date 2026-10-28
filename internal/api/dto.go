@@ -1,6 +1,7 @@
 package api
 
 import (
+	"net/http"
 	"time"
 
 	"github.com/markzugenjer/ai-screener-interview-backend/internal/domain"
@@ -114,13 +115,24 @@ func toInterviewDTO(iv *domain.Interview) interviewDTO {
 		EndedAt: iv.EndedAt, DurationSeconds: iv.DurationSeconds, CreatedAt: iv.CreatedAt}
 }
 
-func summaryDTO(s *domain.InterviewSummary) interviewDTO {
+func summaryDTO(s *domain.InterviewSummary, lang string) interviewDTO {
 	d := toInterviewDTO(&s.Interview)
 	d.Job = &jobBrief{Title: s.JobTitle, Slug: s.JobSlug, Category: s.JobCategory, Level: s.JobLevel,
 		Division: s.JobDivision, Skills: nonNil(s.JobSkills)}
 	d.Overall = s.Overall
 	d.Summary = s.Summary
+	if v := s.SummaryByLang[lang]; v != "" {
+		d.Summary = v
+	}
 	return d
+}
+
+// feedbackLang reads ?lang= (en, id), defaulting to English.
+func feedbackLang(r *http.Request) string {
+	if l := domain.NormalizeLanguage(r.URL.Query().Get("lang")); l != "" {
+		return l
+	}
+	return "en"
 }
 
 type resultRowDTO struct {
@@ -146,9 +158,17 @@ type candidateScoreDTO struct {
 	ScoredAt   time.Time          `json:"scoredAt"`
 }
 
-func toCandidateScore(s *domain.Score) candidateScoreDTO {
-	return candidateScoreDTO{Overall: s.Overall, Summary: s.CandidateSummary, Dimensions: s.Dimensions,
-		Strengths: nonNil(s.Strengths), Growth: nonNil(s.Improvements), Tips: nonNil(s.Tips), ScoredAt: s.CreatedAt}
+func toCandidateScore(s *domain.Score, lang string) candidateScoreDTO {
+	ct := s.CandidateFor(lang)
+	dims := make([]domain.Dimension, len(s.Dimensions))
+	for i, d := range s.Dimensions {
+		if n, ok := ct.Notes[d.Key]; ok {
+			d.Notes = nonNil(n)
+		}
+		dims[i] = d
+	}
+	return candidateScoreDTO{Overall: s.Overall, Summary: ct.Summary, Dimensions: dims,
+		Strengths: nonNil(ct.Strengths), Growth: nonNil(ct.Growth), Tips: nonNil(ct.Tips), ScoredAt: s.CreatedAt}
 }
 
 func nonNil[T any](s []T) []T {

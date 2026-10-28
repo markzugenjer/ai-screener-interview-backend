@@ -426,6 +426,7 @@ func scanSummary(rows pgx.Rows, staff bool) (domain.InterviewSummary, error) {
 			out.Summary = sc.RecruiterSummary
 		} else {
 			out.Summary = sc.CandidateSummary
+			out.SummaryByLang = summariesByLang(&sc)
 		}
 	}
 	return out, nil
@@ -703,3 +704,11 @@ func (d *DB) Audit(ctx context.Context, e domain.AuditEntry) error {
 }
 
 var _ store.Store = (*DB)(nil)
+
+func summariesByLang(sc *domain.Score) map[string]string {
+	m := map[string]string{}
+	for _, l := range domain.FeedbackLanguages {
+		m[l] = sc.CandidateFor(l).Summary
+	}
+	return m
+}

@@ -49,11 +49,17 @@ type llmResult struct {
 		Communication  []string `json:"communication"`
 		Motivation     []string `json:"motivation"`
 	} `json:"notes"`
-	RecruiterSummary string   `json:"recruiterSummary"`
-	CandidateSummary string   `json:"candidateSummary"`
-	Strengths        []string `json:"strengths"`
-	Improvements     []string `json:"improvements"`
-	Tips             []string `json:"tips"`
+	RecruiterSummary string                   `json:"recruiterSummary"`
+	Candidate        map[string]candidateText `json:"candidate"` // by language: "en", "id"
+}
+
+// candidateText is what the model writes for the candidate, in one language.
+type candidateText struct {
+	Summary      string              `json:"summary"`
+	Strengths    []string            `json:"strengths"`
+	Improvements []string            `json:"improvements"`
+	Tips         []string            `json:"tips"`
+	Notes        map[string][]string `json:"notes"`
 }
 
 // Score runs the full pipeline. The interviewID is copied into the result.
@@ -68,7 +74,7 @@ func Score(ctx context.Context, c llm.Completer, interviewID string, in Input) (
 		return insufficient(interviewID, w, speech, c.Model()), nil
 	}
 
-	reply, err := c.Complete(ctx, systemPrompt(in.Language), userPrompt(in), 4096)
+	reply, err := c.Complete(ctx, systemPrompt(in.Language), userPrompt(in), 8192)
 	if err != nil {
 		return nil, err
 	}
@@ -103,8 +109,37 @@ func Score(ctx context.Context, c llm.Completer, interviewID string, in Input) (
 		dim("technical", "Technical Knowledge", w.Technical, r.Ratings.Technical, r.Notes.Technical),
 		dim("problemSolving", "Problem Solving", w.ProblemSolving, r.Ratings.ProblemSolving, r.Notes.ProblemSolving),
 		dim("communication", "Communication", w.Communication, r.Ratings.Communication, r.Notes.Communication),
-		dim("speech", "Speech Delivery", w.Speech, speech.Rating, speechNotes(speech)),
+		dim("speech", "Speech Delivery", w.Speech, speech.Rating, speechNotes(speech, "en")),
 		dim("motivation", "Motivation & Attitude", w.Motivation, r.Ratings.Motivation, r.Notes.Motivation),
+	}
+
+	// Candidate feedback per language. Speech notes come from code, not the model.
+	loc := map[string]domain.CandidateText{}
+	for _, lang := range domain.FeedbackLanguages {
+		ct, ok := r.Candidate[lang]
+		if !ok || strings.TrimSpace(ct.Summary) == "" {
+			continue
+		}
+		notes := map[string][]string{}
+		for _, d := range dims {
+			if d.Key == "speech" {
+				notes[d.Key] = speechNotes(speech, lang)
+			} else {
+				notes[d.Key] = trimList(ct.Notes[d.Key], 4)
+			}
+		}
+		loc[lang] = domain.CandidateText{
+			Summary: truncate(ct.Summary, 1200), Strengths: trimList(ct.Strengths, 5),
+			Growth: trimList(ct.Improvements, 5), Tips: trimList(ct.Tips, 5), Notes: notes,
+		}
+	}
+	// The single-language fields mirror English (or the first language present).
+	var base domain.CandidateText
+	for _, lang := range domain.FeedbackLanguages {
+		if ct, ok := loc[lang]; ok {
+			base = ct
+			break
+		}
 	}
 	overall := 0.0
 	for _, d := range dims {
@@ -114,9 +149,9 @@ func Score(ctx context.Context, c llm.Completer, interviewID string, in Input) (
 
 	return &domain.Score{
 		InterviewID: interviewID, Overall: o, Dimensions: dims, QuestionScores: qs, Speech: speech,
-		RecruiterSummary: truncate(r.RecruiterSummary, 1200), CandidateSummary: truncate(r.CandidateSummary, 1200),
-		Strengths: trimList(r.Strengths, 5), Improvements: trimList(r.Improvements, 5), Tips: trimList(r.Tips, 5),
-		Recommendation: Recommendation(o), Model: c.Model(), CreatedAt: time.Now().UTC(),
+		RecruiterSummary: truncate(r.RecruiterSummary, 1200), CandidateSummary: base.Summary,
+		Strengths: orEmpty(base.Strengths), Improvements: orEmpty(base.Growth), Tips: orEmpty(base.Tips),
+		Localized: loc, Recommendation: Recommendation(o), Model: c.Model(), CreatedAt: time.Now().UTC(),
 	}, nil
 }
 
@@ -140,8 +175,43 @@ func dim(key, label string, weight int, rating float64, notes []string) domain.D
 		Points: round1(points), Notes: trimList(notes, 4)}
 }
 
+var insufficientText = map[string]domain.CandidateText{
+	"en": {
+		Summary: "Your session ended before we could hear enough of your answers to give a meaningful evaluation. That's okay — you can try again whenever you're ready.",
+		Tips: []string{
+			"Find a quiet place and check your microphone before starting.",
+			"Take a moment to think, then answer in full sentences — there's no rush.",
+			"If a question is unclear, ask the interviewer to repeat or rephrase it.",
+		},
+	},
+	"id": {
+		Summary: "Sesi kamu berakhir sebelum kami mendengar cukup banyak jawaban untuk memberi penilaian yang berarti. Tidak apa-apa — kamu bisa mencoba lagi kapan pun kamu siap.",
+		Tips: []string{
+			"Cari tempat yang tenang dan cek mikrofon sebelum mulai.",
+			"Luangkan waktu sejenak untuk berpikir, lalu jawab dengan kalimat lengkap — tidak perlu terburu-buru.",
+			"Kalau pertanyaannya kurang jelas, minta pewawancara mengulang atau menjelaskannya dengan cara lain.",
+		},
+	},
+}
+
+var insufficientNote = map[string]string{
+	"en": "Not enough spoken answers were recorded to evaluate this area.",
+	"id": "Belum cukup jawaban lisan yang terekam untuk menilai aspek ini.",
+}
+
 func insufficient(id string, w domain.Weights, sp domain.SpeechMetrics, model string) *domain.Score {
-	note := []string{"Not enough spoken answers were recorded to evaluate this area."}
+	dimKeys := []string{"technical", "problemSolving", "communication", "speech", "motivation"}
+	loc := map[string]domain.CandidateText{}
+	for _, lang := range domain.FeedbackLanguages {
+		ct := insufficientText[lang]
+		ct.Strengths, ct.Growth = []string{}, []string{}
+		ct.Notes = map[string][]string{}
+		for _, k := range dimKeys {
+			ct.Notes[k] = []string{insufficientNote[lang]}
+		}
+		loc[lang] = ct
+	}
+	note := []string{insufficientNote["en"]}
 	return &domain.Score{
 		InterviewID: id, Overall: 0, Speech: sp, Model: model, Recommendation: "no", CreatedAt: time.Now().UTC(),
 		Dimensions: []domain.Dimension{
@@ -152,12 +222,8 @@ func insufficient(id string, w domain.Weights, sp domain.SpeechMetrics, model st
 			{Key: "motivation", Label: "Motivation & Attitude", Max: w.Motivation, Rating: 1, Notes: note},
 		},
 		RecruiterSummary: "The interview ended before the candidate gave enough answers to evaluate.",
-		CandidateSummary: "Your session ended before we could hear enough of your answers to give a meaningful evaluation. That's okay — you can try again whenever you're ready.",
-		Tips: []string{
-			"Find a quiet place and check your microphone before starting.",
-			"Take a moment to think, then answer in full sentences — there's no rush.",
-			"If a question is unclear, ask the interviewer to repeat or rephrase it.",
-		},
+		CandidateSummary: loc["en"].Summary, Strengths: []string{}, Improvements: []string{}, Tips: loc["en"].Tips,
+		Localized: loc,
 	}
 }
 
@@ -234,23 +300,36 @@ func speechRating(m domain.SpeechMetrics) float64 {
 	return clamp(r, 1, 5)
 }
 
-func speechNotes(m domain.SpeechMetrics) []string {
+func speechNotes(m domain.SpeechMetrics, lang string) []string {
+	id := lang == "id"
 	var n []string
 	if m.WordsPerMinute > 0 {
-		pace := "a comfortable pace"
+		pace, paceID := "a comfortable pace", "tempo yang nyaman"
 		switch {
 		case m.WordsPerMinute < 90:
-			pace = "a slow pace"
+			pace, paceID = "a slow pace", "tempo yang lambat"
 		case m.WordsPerMinute > 180:
-			pace = "a fast pace"
+			pace, paceID = "a fast pace", "tempo yang cepat"
 		}
-		n = append(n, fmt.Sprintf("Spoke at about %.0f words per minute, %s.", m.WordsPerMinute, pace))
+		if id {
+			n = append(n, fmt.Sprintf("Berbicara sekitar %.0f kata per menit, %s.", m.WordsPerMinute, paceID))
+		} else {
+			n = append(n, fmt.Sprintf("Spoke at about %.0f words per minute, %s.", m.WordsPerMinute, pace))
+		}
 	}
 	if m.CandidateWords > 0 {
-		n = append(n, fmt.Sprintf("Used %d filler words (like \"eee\" or \"hmm\") across %d words.", m.FillerWords, m.CandidateWords))
+		if id {
+			n = append(n, fmt.Sprintf("Menggunakan %d kata pengisi (seperti \"eee\" atau \"hmm\") dari %d kata.", m.FillerWords, m.CandidateWords))
+		} else {
+			n = append(n, fmt.Sprintf("Used %d filler words (like \"eee\" or \"hmm\") across %d words.", m.FillerWords, m.CandidateWords))
+		}
 	}
 	if m.LongPauses > 0 {
-		n = append(n, fmt.Sprintf("Took more than 6 seconds to start answering %d time(s).", m.LongPauses))
+		if id {
+			n = append(n, fmt.Sprintf("Butuh lebih dari 6 detik untuk mulai menjawab sebanyak %d kali.", m.LongPauses))
+		} else {
+			n = append(n, fmt.Sprintf("Took more than 6 seconds to start answering %d time(s).", m.LongPauses))
+		}
 	}
 	return n
 }
@@ -270,16 +349,21 @@ Rules:
 - Transcripts come from speech recognition and may contain recognition errors; be lenient about obvious mis-transcriptions.
 - "notes" describe the answers factually and neutrally (about the answers, not the person's character), max 3 per dimension.
 - "recruiterSummary": 2–4 frank sentences for the recruiter, including the main risk.
-- "candidateSummary": 2–3 sentences addressed to the candidate ("you"), honest but kind and encouraging.
-- "tips": 3–5 specific, actionable, positive tips that would help this candidate do better next time.
-- "evidence": a short quote (max 25 words) from the candidate's own words.
-- Write all text fields in ` + lang + `.
+- "evidence": a short quote (max 25 words) from the candidate's own words, verbatim.
+- Write "notes", "recruiterSummary", "reasoning", "coveredPoints" and "missedPoints" in ` + lang + `.
+- "candidate" is the feedback shown to the candidate, written TWICE with the same meaning: "en" in natural English and "id" in natural, friendly Bahasa Indonesia (use "kamu"):
+  - "summary": 2–3 sentences addressed to the candidate ("you"/"kamu"), honest but kind and encouraging.
+  - "strengths" and "improvements": up to 4 short points each; improvements phrased constructively.
+  - "tips": 3–5 specific, actionable, positive tips that would help this candidate do better next time.
+  - "notes": for each dimension, up to 3 short, supportive notes about the answers, addressed to the candidate.
 
 Reply with ONLY one JSON object, no markdown, in exactly this shape:
 {"questions":[{"questionId":"<id from the list>","score":1-5,"coveredPoints":["..."],"missedPoints":["..."],"evidence":"...","reasoning":"..."}],
 "ratings":{"technical":1-5,"problemSolving":1-5,"communication":1-5,"motivation":1-5},
 "notes":{"technical":["..."],"problemSolving":["..."],"communication":["..."],"motivation":["..."]},
-"recruiterSummary":"...","candidateSummary":"...","strengths":["..."],"improvements":["..."],"tips":["..."]}
+"recruiterSummary":"...",
+"candidate":{"en":{"summary":"...","strengths":["..."],"improvements":["..."],"tips":["..."],"notes":{"technical":["..."],"problemSolving":["..."],"communication":["..."],"motivation":["..."]}},
+"id":{"summary":"...","strengths":["..."],"improvements":["..."],"tips":["..."],"notes":{"technical":["..."],"problemSolving":["..."],"communication":["..."],"motivation":["..."]}}}}
 Include only questions that were actually asked in the transcript.`
 }
 
@@ -333,6 +417,13 @@ func truncate(s string, n int) string {
 		return string(r[:n]) + "…"
 	}
 	return s
+}
+
+func orEmpty(in []string) []string {
+	if in == nil {
+		return []string{}
+	}
+	return in
 }
 
 func trimList(in []string, n int) []string {

@@ -21,9 +21,10 @@ func (a *API) myInterviews(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal", "Could not load your interviews.")
 		return
 	}
+	lang := feedbackLang(r)
 	out := make([]interviewDTO, 0, len(list))
 	for i := range list {
-		out = append(out, summaryDTO(&list[i]))
+		out = append(out, summaryDTO(&list[i], lang))
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"interviews": out})
 }
@@ -268,7 +269,7 @@ func (a *API) feedback(w http.ResponseWriter, r *http.Request) {
 	sc, err := a.store.GetScore(r.Context(), iv.ID)
 	switch {
 	case err == nil:
-		resp["feedback"] = toCandidateScore(sc)
+		resp["feedback"] = toCandidateScore(sc, feedbackLang(r))
 	case errors.Is(err, store.ErrNotFound):
 		resp["feedback"] = nil
 	default:

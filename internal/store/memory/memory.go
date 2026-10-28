@@ -340,6 +340,10 @@ func (s *Store) summary(iv *domain.Interview, staff bool) domain.InterviewSummar
 			out.Summary = sc.RecruiterSummary
 		} else {
 			out.Summary = sc.CandidateSummary
+			out.SummaryByLang = map[string]string{}
+			for _, l := range domain.FeedbackLanguages {
+				out.SummaryByLang[l] = sc.CandidateFor(l).Summary
+			}
 		}
 		for _, d := range sc.Dimensions {
 			r := d.Rating

@@ -171,6 +171,18 @@ type SpeechMetrics struct {
 	Rating          float64 `json:"rating"`
 }
 
+// FeedbackLanguages are the languages candidate feedback is written in.
+var FeedbackLanguages = []string{"en", "id"}
+
+// CandidateText is the candidate-facing feedback in one language.
+type CandidateText struct {
+	Summary   string              `json:"summary"`
+	Strengths []string            `json:"strengths"`
+	Growth    []string            `json:"growth"`
+	Tips      []string            `json:"tips"`
+	Notes     map[string][]string `json:"notes"` // by dimension key
+}
+
 type Score struct {
 	InterviewID      string          `json:"interviewId"`
 	Overall          int             `json:"overall"`
@@ -183,8 +195,10 @@ type Score struct {
 	Improvements     []string        `json:"improvements"`
 	Tips             []string        `json:"tips"`
 	Recommendation   string          `json:"recommendation"` // strong_yes, yes, maybe, no
-	Model            string          `json:"model"`
-	CreatedAt        time.Time       `json:"createdAt"`
+	// Localized holds candidate feedback per language ("en", "id").
+	Localized map[string]CandidateText `json:"localized,omitempty"`
+	Model     string                   `json:"model"`
+	CreatedAt time.Time                `json:"createdAt"`
 }
 
 type Review struct {
@@ -200,6 +214,8 @@ type Review struct {
 // InterviewSummary is a row in the candidate's history and the recruiter's results list.
 type InterviewSummary struct {
 	Interview
+	// SummaryByLang holds the candidate summary per language (candidate lists only).
+	SummaryByLang  map[string]string
 	JobTitle       string
 	JobSlug        string
 	JobCategory    string
@@ -253,4 +269,27 @@ type AuditEntry struct {
 	EntityID string
 	IP       string
 	Detail   map[string]any
+}
+
+// CandidateFor returns candidate feedback in lang. Scores saved before feedback
+// was localized fall back to the single-language fields.
+func (s *Score) CandidateFor(lang string) CandidateText {
+	if ct, ok := s.Localized[lang]; ok && ct.Summary != "" {
+		return ct
+	}
+	notes := map[string][]string{}
+	for _, d := range s.Dimensions {
+		notes[d.Key] = d.Notes
+	}
+	return CandidateText{Summary: s.CandidateSummary, Strengths: s.Strengths, Growth: s.Improvements, Tips: s.Tips, Notes: notes}
+}
+
+// NormalizeLanguage maps a request value to a supported feedback language ("" if unknown).
+func NormalizeLanguage(v string) string {
+	for _, l := range FeedbackLanguages {
+		if v == l {
+			return l
+		}
+	}
+	return ""
 }

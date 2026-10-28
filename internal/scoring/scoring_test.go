@@ -52,7 +52,9 @@ func TestScoreCombinesWeights(t *testing.T) {
 	f := &fakeLLM{reply: "Here you go:\n```json\n" + `{"questions":[{"questionId":"q1","score":4,"coveredPoints":["block scope"],"missedPoints":[],"evidence":"let dan const block scoped","reasoning":"ok"},{"questionId":"invented","score":5}],
 	"ratings":{"technical":5,"problemSolving":3,"communication":4,"motivation":1},
 	"notes":{"technical":["Explained scope well."],"problemSolving":[],"communication":[],"motivation":[]},
-	"recruiterSummary":"Solid basics.","candidateSummary":"You explained scope clearly.","strengths":["Clear"],"improvements":["Give examples"],"tips":["Practice async"]}` + "\n```"}
+	"recruiterSummary":"Solid basics.",
+	"candidate":{"en":{"summary":"You explained scope clearly.","strengths":["Clear"],"improvements":["Give examples"],"tips":["Practice async"],"notes":{"technical":["You explained scope well."]}},
+	"id":{"summary":"Kamu menjelaskan scope dengan jelas.","strengths":["Jelas"],"improvements":["Beri contoh"],"tips":["Latihan async"],"notes":{"technical":["Penjelasan scope kamu bagus."]}}}}` + "\n```"}
 	job := domain.Job{Title: "FE", Level: "junior", Weights: domain.DefaultWeights()}
 	qs := []domain.Question{{ID: "q1", Skill: "JavaScript", Text: "let vs var"}}
 	sc, err := Score(context.Background(), f, "iv1", Input{Job: job, Questions: qs, Turns: turns(), Language: "English"})
@@ -68,6 +70,19 @@ func TestScoreCombinesWeights(t *testing.T) {
 	}
 	if len(sc.QuestionScores) != 1 {
 		t.Fatalf("invented questions must be dropped, got %d", len(sc.QuestionScores))
+	}
+	if sc.CandidateSummary != "You explained scope clearly." || sc.Tips[0] != "Practice async" {
+		t.Fatalf("legacy fields should mirror English: %q %v", sc.CandidateSummary, sc.Tips)
+	}
+	id := sc.CandidateFor("id")
+	if id.Summary != "Kamu menjelaskan scope dengan jelas." || id.Growth[0] != "Beri contoh" {
+		t.Fatalf("indonesian feedback = %+v", id)
+	}
+	if id.Notes["technical"][0] != "Penjelasan scope kamu bagus." || !strings.HasPrefix(id.Notes["speech"][0], "Berbicara sekitar 150 kata") {
+		t.Fatalf("indonesian notes = %v", id.Notes)
+	}
+	if !strings.HasPrefix(sc.CandidateFor("en").Notes["speech"][0], "Spoke at about 150") {
+		t.Fatal("english speech note missing")
 	}
 	sum := 0
 	for _, d := range sc.Dimensions {
@@ -87,6 +102,17 @@ func TestInsufficientAnswersSkipsLLM(t *testing.T) {
 	}
 	if f.called || sc.Overall != 0 || len(sc.Tips) == 0 {
 		t.Fatal("expected insufficient result without calling the model")
+	}
+	if !strings.HasPrefix(sc.CandidateFor("id").Summary, "Sesi kamu") || len(sc.CandidateFor("id").Notes["speech"]) != 1 {
+		t.Fatal("expected Indonesian insufficient text")
+	}
+}
+
+func TestCandidateForFallsBackToLegacyFields(t *testing.T) {
+	old := &domain.Score{CandidateSummary: "Legacy", Tips: []string{"t"},
+		Dimensions: []domain.Dimension{{Key: "technical", Notes: []string{"n"}}}}
+	if got := old.CandidateFor("id"); got.Summary != "Legacy" || got.Notes["technical"][0] != "n" {
+		t.Fatalf("fallback = %+v", got)
 	}
 }
 

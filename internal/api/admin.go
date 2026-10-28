@@ -65,7 +65,7 @@ func (a *API) adminResults(w http.ResponseWriter, r *http.Request) {
 	out := make([]resultRowDTO, 0, len(rows))
 	for i := range rows {
 		s := &rows[i]
-		out = append(out, resultRowDTO{interviewDTO: summaryDTO(s), CandidateName: s.CandidateName,
+		out = append(out, resultRowDTO{interviewDTO: summaryDTO(s, ""), CandidateName: s.CandidateName,
 			CandidateEmail: s.CandidateEmail, Recommendation: s.Recommendation, Technical: s.Technical,
 			Communication: s.Communication, Decision: s.Decision})
 	}
