@@ -64,6 +64,23 @@ adopt=$(vcs agent adopt --slug "$SLUG" --port 8080 --health-path /healthz || tru
 case "$(printf '%s' "$adopt" | json_field status)" in
   needs_input|failed) printf '%s\n' "$adopt"; echo; echo "VCS needs something before deploying. Copy the output above into the chat."; exit 1 ;;
 esac
+# VCS commits its own build-workflow updates ("chore: sync build workflow") to
+# the project's copy. Merge those in first so the push is a fast-forward; stop if
+# VCS's copy has anything else, rather than overwrite or guess.
+if git fetch -q vcs 2>/dev/null && git rev-parse -q --verify vcs/main >/dev/null; then
+  if ! git merge-base --is-ancestor vcs/main HEAD; then
+    others=$(git diff --name-only HEAD...vcs/main | grep -v '^\.forgejo/' || true)
+    if [ -n "$others" ]; then
+      echo "VCS's copy of the project has changes outside its build workflow:"
+      printf '  %s\n' $others
+      echo "Copy this output into the chat; nothing was pushed."
+      exit 1
+    fi
+    git merge -q --no-edit -m "chore(vcs): merge VCS build workflow updates" vcs/main
+    git push -q origin HEAD || echo "(could not push to GitHub; continuing with the local commit)"
+    echo "Merged VCS's build workflow updates."
+  fi
+fi
 args=(agent deploy --slug "$SLUG" --port 8080 --health-path /healthz --wait 9m)
 result=$(vcs "${args[@]}" || true)
 code=$(printf '%s' "$result" | json_field code)
