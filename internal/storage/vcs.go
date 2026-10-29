@@ -4,12 +4,16 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -149,7 +153,7 @@ func (v *VCS) grant(ctx context.Context, req map[string]any) (*vcsGrant, error) 
 	r.Header.Set("Accept", "application/json")
 	res, err := v.client.Do(r)
 	if err != nil {
-		return nil, &StorageError{Step: step, Err: errors.New("signer unreachable")}
+		return nil, &StorageError{Step: step, Err: errors.New("signer unreachable: " + netCause(err))}
 	}
 	defer res.Body.Close()
 	raw, _ := io.ReadAll(io.LimitReader(res.Body, 1<<16))
@@ -216,7 +220,7 @@ func (v *VCS) Put(ctx context.Context, data []byte, ext, owner string) (string, 
 	}
 	res, err := v.do(ctx, g, sealed)
 	if err != nil {
-		return "", &StorageError{Step: "put", Err: errors.New("bucket unreachable")}
+		return "", &StorageError{Step: "put", Err: errors.New("bucket unreachable: " + netCause(err))}
 	}
 	_, _ = io.Copy(io.Discard, io.LimitReader(res.Body, 1<<16))
 	res.Body.Close()
@@ -236,7 +240,7 @@ func (v *VCS) Get(ctx context.Context, key, owner string) ([]byte, error) {
 	}
 	res, err := v.do(ctx, g, nil)
 	if err != nil {
-		return nil, &StorageError{Step: "get", Err: errors.New("bucket unreachable")}
+		return nil, &StorageError{Step: "get", Err: errors.New("bucket unreachable: " + netCause(err))}
 	}
 	defer res.Body.Close()
 	if res.StatusCode == http.StatusNotFound {
@@ -262,11 +266,33 @@ func (v *VCS) Delete(ctx context.Context, key string) error {
 	}
 	res, err := v.do(ctx, g, nil)
 	if err != nil {
-		return &StorageError{Step: "delete", Err: errors.New("bucket unreachable")}
+		return &StorageError{Step: "delete", Err: errors.New("bucket unreachable: " + netCause(err))}
 	}
 	res.Body.Close()
 	if res.StatusCode/100 != 2 && res.StatusCode != http.StatusNotFound {
 		return &StorageError{Step: "delete", Status: res.StatusCode}
 	}
 	return nil
+}
+
+// netCause names the kind of network failure without the URL (which may be signed).
+func netCause(err error) string {
+	var unknownCA x509.UnknownAuthorityError
+	var hostErr x509.HostnameError
+	var certErr *tls.CertificateVerificationError
+	var dnsErr *net.DNSError
+	var opErr *net.OpError
+	switch {
+	case errors.As(err, &unknownCA), errors.As(err, &certErr):
+		return "TLS certificate not trusted (missing CA bundle?)"
+	case errors.As(err, &hostErr):
+		return "TLS hostname mismatch"
+	case errors.As(err, &dnsErr):
+		return "DNS lookup failed"
+	case errors.Is(err, context.DeadlineExceeded) || os.IsTimeout(err):
+		return "timeout"
+	case errors.As(err, &opErr):
+		return "connection failed (" + opErr.Op + ")"
+	}
+	return "network error"
 }

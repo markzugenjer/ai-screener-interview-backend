@@ -143,3 +143,16 @@ func TestVCSErrorsNameTheStep(t *testing.T) {
 		t.Fatal("errors must not contain URLs or tokens")
 	}
 }
+
+// Reproduces the production failure: the signer's certificate is not trusted
+// (the container had no CA bundle). The error must say so, without the URL.
+func TestVCSUntrustedCertificateIsNamed(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer srv.Close()
+	enc, _ := security.NewEncryptor(make([]byte, 32))
+	v, _ := NewVCS(srv.URL+"/sign", "tok", enc)
+	_, err := v.Put(context.Background(), []byte("x"), ".pdf", "u")
+	if err == nil || !strings.Contains(err.Error(), "TLS certificate not trusted") || strings.Contains(err.Error(), srv.URL) {
+		t.Fatalf("err = %v", err)
+	}
+}

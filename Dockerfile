@@ -30,11 +30,14 @@ RUN pnpm build
 
 FROM node:22-bookworm-slim
 WORKDIR /app
-ENV NODE_ENV=production NEXT_TELEMETRY_DISABLED=1 PORT=8080
+ENV NODE_ENV=production NEXT_TELEMETRY_DISABLED=1 PORT=8080 SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
 COPY --from=web --chown=node:node /web/.next/standalone /app/web
 COPY --from=web --chown=node:node /web/.next/static /app/web/.next/static
 COPY --from=web --chown=node:node /web/public /app/web/public
 COPY --from=api /out/api /app/bin/api
+# node:*-slim ships without the system CA bundle (Node carries its own), but the
+# Go API needs it for every outbound HTTPS call (VCS storage, Anthropic, LiveKit).
+COPY --from=api /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 COPY --chmod=755 deploy/vcs/entrypoint.sh /app/entrypoint.sh
 USER node
 EXPOSE 8080
