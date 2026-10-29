@@ -19,7 +19,7 @@ func (a *API) adminStats(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal", "Could not load stats.")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"stats": st})
+	writeJSON(w, http.StatusOK, map[string]any{"stats": st, "openRecruiterAccess": a.cfg.OpenRecruiterAccess})
 }
 
 func (a *API) adminResults(w http.ResponseWriter, r *http.Request) {

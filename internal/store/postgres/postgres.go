@@ -176,6 +176,37 @@ func (d *DB) SetUserRole(ctx context.Context, userID string, role domain.Role) e
 	return err
 }
 
+func (d *DB) ListUsers(ctx context.Context, f store.UserFilter) ([]domain.User, int, error) {
+	where := `WHERE ($1 = '' OR role = $1)
+		AND ($2 = '' OR full_name ILIKE '%' || $2 || '%' OR email ILIKE '%' || $2 || '%')`
+	q := escapeLike(f.Query)
+	var total int
+	if err := d.pool.QueryRow(ctx, `SELECT count(*) FROM users `+where, f.Role, q).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+	rows, err := d.pool.Query(ctx, `SELECT `+userCols+` FROM users `+where+`
+		ORDER BY created_at DESC LIMIT $3 OFFSET $4`, f.Role, q, f.PageSize, (f.Page-1)*f.PageSize)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+	var out []domain.User
+	for rows.Next() {
+		u, err := scanUser(rows)
+		if err != nil {
+			return nil, 0, err
+		}
+		out = append(out, *u)
+	}
+	return out, total, rows.Err()
+}
+
+func (d *DB) CountUsersByRole(ctx context.Context, role domain.Role) (int, error) {
+	var n int
+	err := d.pool.QueryRow(ctx, `SELECT count(*) FROM users WHERE role = $1`, string(role)).Scan(&n)
+	return n, err
+}
+
 func (d *DB) CreateSession(ctx context.Context, s *domain.Session) error {
 	_, err := d.pool.Exec(ctx, `INSERT INTO sessions (id, user_id, token_hash, user_agent, ip, expires_at, created_at)
 		VALUES ($1,$2,$3,$4,$5,$6,$7)`, s.ID, s.UserID, s.TokenHash, s.UserAgent, s.IP, s.ExpiresAt, s.CreatedAt)

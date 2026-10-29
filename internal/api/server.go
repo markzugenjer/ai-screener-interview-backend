@@ -117,6 +117,8 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/admin/results/{id}/rescore", a.requireStaff(a.adminRescore))
 	mux.HandleFunc("GET /api/v1/admin/candidates/{id}/resume", a.requireStaff(a.adminResume))
 	mux.HandleFunc("GET /api/v1/admin/diagnostics/storage", requireAdmin(a.adminStorageCheck))
+	mux.HandleFunc("GET /api/v1/admin/users", requireAdmin(a.adminListUsers))
+	mux.HandleFunc("PUT /api/v1/admin/users/{id}/role", requireAdmin(a.adminSetUserRole))
 
 	// Internal endpoints for the voice agent (shared secret, no cookies, no CSRF).
 	internal := http.NewServeMux()

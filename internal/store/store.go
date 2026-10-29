@@ -29,6 +29,9 @@ type Store interface {
 	GetUserByID(ctx context.Context, id string) (*domain.User, error)
 	UpdateLoginState(ctx context.Context, userID string, failed int, lockedUntil, lastLogin *time.Time) error
 	SetUserRole(ctx context.Context, userID string, role domain.Role) error
+	// ListUsers pages through accounts, newest first; total counts all matches.
+	ListUsers(ctx context.Context, f UserFilter) (users []domain.User, total int, err error)
+	CountUsersByRole(ctx context.Context, role domain.Role) (int, error)
 
 	CreateSession(ctx context.Context, s *domain.Session) error
 	GetSessionUser(ctx context.Context, tokenHash string) (*domain.Session, *domain.User, error)
@@ -73,4 +76,11 @@ type Store interface {
 	Audit(ctx context.Context, e domain.AuditEntry) error
 	Ping(ctx context.Context) error
 	Close()
+}
+
+type UserFilter struct {
+	Query    string // name or email contains
+	Role     string // "" = any
+	Page     int    // 1-based
+	PageSize int
 }

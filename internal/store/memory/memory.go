@@ -630,3 +630,38 @@ func (s *Store) ListUsersForTest() []domain.User {
 	}
 	return out
 }
+
+func (s *Store) ListUsers(_ context.Context, f store.UserFilter) ([]domain.User, int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	q := strings.ToLower(f.Query)
+	var all []domain.User
+	for _, u := range s.users {
+		if f.Role != "" && string(u.Role) != f.Role {
+			continue
+		}
+		if q != "" && !strings.Contains(strings.ToLower(u.FullName), q) && !strings.Contains(strings.ToLower(u.Email), q) {
+			continue
+		}
+		all = append(all, *u)
+	}
+	sort.Slice(all, func(a, b int) bool { return all[a].CreatedAt.After(all[b].CreatedAt) })
+	start := (f.Page - 1) * f.PageSize
+	if start > len(all) {
+		start = len(all)
+	}
+	end := min(start+f.PageSize, len(all))
+	return all[start:end], len(all), nil
+}
+
+func (s *Store) CountUsersByRole(_ context.Context, role domain.Role) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	n := 0
+	for _, u := range s.users {
+		if u.Role == role {
+			n++
+		}
+	}
+	return n, nil
+}

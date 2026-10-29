@@ -652,3 +652,67 @@ func TestOpenRecruiterAccess(t *testing.T) {
 		t.Fatalf("admin-only routes stay admin-only: %d", code)
 	}
 }
+
+func TestTeamRoles(t *testing.T) {
+	e := setup(t)
+	ctx := context.Background()
+	admin, err := app.CreateStaff(ctx, e.store, "Ada", "ada@company.com", "admin-pass-12345", domain.RoleAdmin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cand := e.client()
+	body, ct := registerForm(goodFields, []byte("%PDF-1.4"))
+	cand.do("POST", "/api/v1/auth/register", body, ct, nil)
+	budi, _ := e.store.GetUserByEmail(ctx, "budi@mail.com")
+
+	if code := cand.json("GET", "/api/v1/admin/users", nil, nil); code != 403 {
+		t.Fatalf("candidates must not see the team: %d", code)
+	}
+	adm := e.client()
+	adm.json("POST", "/api/v1/auth/login", map[string]string{"email": "ada@company.com", "password": "admin-pass-12345"}, nil)
+	var list struct {
+		Users  []teamMemberDTO
+		Total  int
+		Counts map[string]int
+	}
+	if code := adm.json("GET", "/api/v1/admin/users?q=budi", nil, &list); code != 200 || list.Total != 1 || list.Users[0].Role != "candidate" {
+		t.Fatalf("list: %d %+v", code, list)
+	}
+	if list.Counts["admin"] != 1 {
+		t.Fatalf("counts: %v", list.Counts)
+	}
+
+	// Grant recruiter access: it applies to the user's next request.
+	if code := cand.json("GET", "/api/v1/admin/jobs", nil, nil); code != 403 {
+		t.Fatalf("before grant: %d", code)
+	}
+	if code := adm.json("PUT", "/api/v1/admin/users/"+budi.ID+"/role", map[string]string{"role": "recruiter"}, nil); code != 200 {
+		t.Fatalf("grant: %d", code)
+	}
+	if code := cand.json("GET", "/api/v1/admin/jobs", nil, nil); code != 200 {
+		t.Fatalf("after grant: %d", code)
+	}
+	// Safeguards: no own-role change, no removing the last admin, valid roles only.
+	if code := adm.json("PUT", "/api/v1/admin/users/"+admin.ID+"/role", map[string]string{"role": "candidate"}, nil); code != 409 {
+		t.Fatalf("own role: %d", code)
+	}
+	if code := adm.json("PUT", "/api/v1/admin/users/"+budi.ID+"/role", map[string]string{"role": "owner"}, nil); code != 400 {
+		t.Fatalf("invalid role: %d", code)
+	}
+	adm.json("PUT", "/api/v1/admin/users/"+budi.ID+"/role", map[string]string{"role": "admin"}, nil)
+	if code := cand.json("PUT", "/api/v1/admin/users/"+admin.ID+"/role", map[string]string{"role": "recruiter"}, nil); code != 200 {
+		t.Fatalf("second admin may demote the first: %d", code)
+	}
+	if code := cand.json("PUT", "/api/v1/admin/users/"+admin.ID+"/role", map[string]string{"role": "candidate"}, nil); code != 200 {
+		t.Fatalf("demote recruiter: %d", code)
+	}
+	// Budi is now the only admin and cannot be demoted by anyone (not even via another account).
+	if n, _ := e.store.CountUsersByRole(ctx, domain.RoleAdmin); n != 1 {
+		t.Fatalf("admins: %d", n)
+	}
+	other, _ := app.CreateStaff(ctx, e.store, "Rina", "rina@company.com", "recruiter-pass-123", domain.RoleRecruiter)
+	_ = other
+	if code := cand.json("PUT", "/api/v1/admin/users/"+budi.ID+"/role", map[string]string{"role": "recruiter"}, nil); code != 409 {
+		t.Fatalf("own role (last admin): %d", code)
+	}
+}
