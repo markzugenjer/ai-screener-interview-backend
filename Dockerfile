@@ -5,7 +5,7 @@
 # machine's own platform and cross-compiles; the final stage only COPYs.
 # The website is the pinned commit of ai-screener-interview-frontend below
 # (`make vcs-deploy` bumps it to the latest main before deploying).
-ARG FRONTEND_REF=907a4be
+ARG FRONTEND_REF=907a4be24ec6e5b3048e1f600629ef855571d1e2
 
 FROM --platform=$BUILDPLATFORM golang:1.24-alpine AS api
 ARG TARGETOS=linux
