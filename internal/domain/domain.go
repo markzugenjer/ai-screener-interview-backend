@@ -21,7 +21,8 @@ type User struct {
 	Role         Role
 	FullName     string
 	Email        string
-	PasswordHash string
+	PasswordHash string // empty for JOBI accounts (no password sign-in)
+	JobiSub      string // JOBI subject id for staff who sign in with JOBI
 	PhoneEnc     string // AES-GCM encrypted E.164 WhatsApp number (base64)
 	ResumeKey    string // storage key of the encrypted resume file
 	ResumeName   string

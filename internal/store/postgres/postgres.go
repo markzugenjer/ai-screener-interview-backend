@@ -124,13 +124,13 @@ func fromJSON[T any](b []byte, dst *T) {
 // ---------- Users ----------
 
 const userCols = `id::text, role, full_name, email, password_hash, phone_enc, resume_key, resume_name,
-	resume_mime, failed_logins, locked_until, last_login_at, created_at`
+	resume_mime, failed_logins, locked_until, last_login_at, created_at, jobi_sub`
 
 func scanUser(row pgx.Row) (*domain.User, error) {
 	var u domain.User
 	var role string
 	err := row.Scan(&u.ID, &role, &u.FullName, &u.Email, &u.PasswordHash, &u.PhoneEnc, &u.ResumeKey,
-		&u.ResumeName, &u.ResumeMime, &u.FailedLogins, &u.LockedUntil, &u.LastLoginAt, &u.CreatedAt)
+		&u.ResumeName, &u.ResumeMime, &u.FailedLogins, &u.LockedUntil, &u.LastLoginAt, &u.CreatedAt, &u.JobiSub)
 	if err != nil {
 		return nil, mapErr(err)
 	}
@@ -140,10 +140,17 @@ func scanUser(row pgx.Row) (*domain.User, error) {
 
 func (d *DB) CreateUser(ctx context.Context, u *domain.User) error {
 	_, err := d.pool.Exec(ctx, `INSERT INTO users (id, role, full_name, email, password_hash, phone_enc,
-		resume_key, resume_name, resume_mime, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+		resume_key, resume_name, resume_mime, created_at, jobi_sub) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
 		u.ID, string(u.Role), u.FullName, u.Email, u.PasswordHash, u.PhoneEnc, u.ResumeKey, u.ResumeName,
-		u.ResumeMime, u.CreatedAt)
+		u.ResumeMime, u.CreatedAt, u.JobiSub)
 	return mapErr(err)
+}
+
+func (d *DB) GetUserByJobiSub(ctx context.Context, sub string) (*domain.User, error) {
+	if sub == "" {
+		return nil, store.ErrNotFound
+	}
+	return scanUser(d.pool.QueryRow(ctx, `SELECT `+userCols+` FROM users WHERE jobi_sub = $1`, sub))
 }
 
 func (d *DB) GetUserByEmail(ctx context.Context, email string) (*domain.User, error) {

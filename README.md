@@ -75,6 +75,12 @@ and deploys. `.env.production` holds the production settings and is never commit
 | Resumes | VCS object storage | Used when `VCS_STORAGE_URL` / `VCS_STORAGE_TOKEN` are present; still AES-GCM encrypted before upload. |
 | Voice agent (`agent/`) | LiveKit Cloud | Not an HTTP service. `cd agent && lk agent create --secrets-file .env.production` with `API_INTERNAL_URL` = the VCS URL and the same `INTERNAL_API_SECRET`. |
 
+**Sign-in.** Candidates use email and password. FDC staff can use **Sign in with JOBI** (declared
+in `vcs.yaml`; VCS injects `VCS_JOBI_*` on deploy, so it only works on the deployed HTTPS site).
+JOBI admits active employees only; their accounts are created as recruiters, keyed by JOBI's `sub`.
+`OPEN_RECRUITER_ACCESS=true` temporarily lets every signed-in user open the recruiter area
+(admin-only actions still need an admin); turn it off before real applicants register.
+
 `Dockerfile.api` is the Go-only image used by `docker compose`. Demo jobs are not seeded in
 production unless `SEED_DEMO=true`.
 

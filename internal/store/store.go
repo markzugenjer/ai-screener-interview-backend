@@ -25,6 +25,7 @@ type Store interface {
 	// Users and sessions
 	CreateUser(ctx context.Context, u *domain.User) error
 	GetUserByEmail(ctx context.Context, email string) (*domain.User, error)
+	GetUserByJobiSub(ctx context.Context, sub string) (*domain.User, error)
 	GetUserByID(ctx context.Context, id string) (*domain.User, error)
 	UpdateLoginState(ctx context.Context, userID string, failed int, lockedUntil, lastLogin *time.Time) error
 	SetUserRole(ctx context.Context, userID string, role domain.Role) error

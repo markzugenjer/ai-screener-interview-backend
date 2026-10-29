@@ -59,7 +59,7 @@ func (s *Store) CreateUser(_ context.Context, u *domain.User) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, x := range s.users {
-		if strings.EqualFold(x.Email, u.Email) {
+		if strings.EqualFold(x.Email, u.Email) || (u.JobiSub != "" && x.JobiSub == u.JobiSub) {
 			return store.ErrDuplicate
 		}
 	}
@@ -72,6 +72,17 @@ func (s *Store) GetUserByEmail(_ context.Context, email string) (*domain.User, e
 	defer s.mu.Unlock()
 	for _, u := range s.users {
 		if strings.EqualFold(u.Email, email) {
+			return clone(u), nil
+		}
+	}
+	return nil, store.ErrNotFound
+}
+
+func (s *Store) GetUserByJobiSub(_ context.Context, sub string) (*domain.User, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, u := range s.users {
+		if sub != "" && u.JobiSub == sub {
 			return clone(u), nil
 		}
 	}
@@ -608,3 +619,14 @@ func (s *Store) Audit(_ context.Context, e domain.AuditEntry) error {
 }
 
 var _ store.Store = (*Store)(nil)
+
+// ListUsersForTest returns every user (tests only).
+func (s *Store) ListUsersForTest() []domain.User {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]domain.User, 0, len(s.users))
+	for _, u := range s.users {
+		out = append(out, *u)
+	}
+	return out
+}

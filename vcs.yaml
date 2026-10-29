@@ -1,0 +1,6 @@
+# VCS settings, read on every deploy.
+# Sign in with JOBI (FDC employee single sign-on): VCS registers this app's JOBI
+# client and injects VCS_JOBI_* on each deploy. The website forwards /api/v1/* to
+# the Go API, so the callback lives there.
+jobi_sso:
+  callback_path: /api/v1/auth/jobi/callback

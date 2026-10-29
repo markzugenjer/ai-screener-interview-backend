@@ -39,7 +39,7 @@ func (a *API) loadOwnInterview(w http.ResponseWriter, r *http.Request, ownerOnly
 	}
 	iv, err := a.store.GetInterview(r.Context(), id)
 	u := userFrom(r)
-	if err != nil || (iv.UserID != u.ID && (ownerOnly || !u.Role.IsStaff())) {
+	if err != nil || (iv.UserID != u.ID && (ownerOnly || !a.canRecruit(u))) {
 		writeError(w, http.StatusNotFound, "not_found", "Interview not found.")
 		return nil
 	}

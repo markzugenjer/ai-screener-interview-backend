@@ -166,9 +166,15 @@ func requireUser(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-func requireStaff(next http.HandlerFunc) http.HandlerFunc {
+// canRecruit: recruiters and admins, or everyone signed in while
+// OPEN_RECRUITER_ACCESS is on.
+func (a *API) canRecruit(u *domain.User) bool {
+	return u != nil && (u.Role.IsStaff() || a.cfg.OpenRecruiterAccess)
+}
+
+func (a *API) requireStaff(next http.HandlerFunc) http.HandlerFunc {
 	return requireUser(func(w http.ResponseWriter, r *http.Request) {
-		if !userFrom(r).Role.IsStaff() {
+		if !a.canRecruit(userFrom(r)) {
 			writeError(w, http.StatusForbidden, "forbidden", "This area is only for recruiters.")
 			return
 		}

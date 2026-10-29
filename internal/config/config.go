@@ -65,6 +65,25 @@ type Config struct {
 
 	// SeedDemo inserts the two demo jobs. Defaults to on outside production.
 	SeedDemo bool
+
+	// OpenRecruiterAccess lets every signed-in user use the recruiter area
+	// (temporary, until roles are managed by an admin). Admin-only actions
+	// such as deleting a job still need the admin role.
+	OpenRecruiterAccess bool
+
+	// Jobi is FDC's employee single sign-on, injected by VCS (VCS_JOBI_*).
+	Jobi JobiConfig
+}
+
+type JobiConfig struct {
+	ClientID, ClientSecret                         string
+	AuthorizeURL, TokenURL, UserinfoURL, LogoutURL string
+	CallbackPath, Scopes                           string
+}
+
+// Enabled reports whether JOBI sign-in is configured.
+func (j JobiConfig) Enabled() bool {
+	return j.ClientID != "" && j.ClientSecret != "" && j.AuthorizeURL != "" && j.TokenURL != "" && j.UserinfoURL != ""
 }
 
 func Load() (*Config, error) {
@@ -97,6 +116,14 @@ func Load() (*Config, error) {
 	}
 	c.MigrationDatabaseURL = get("MIGRATION_DATABASE_URL", get("DATABASE_OWNER_URL", c.DatabaseURL))
 	c.SeedDemo = getBool("SEED_DEMO", !c.IsProduction())
+	c.OpenRecruiterAccess = getBool("OPEN_RECRUITER_ACCESS", false)
+	c.Jobi = JobiConfig{
+		ClientID: get("VCS_JOBI_CLIENT_ID", ""), ClientSecret: get("VCS_JOBI_CLIENT_SECRET", ""),
+		AuthorizeURL: get("VCS_JOBI_AUTHORIZE_URL", ""), TokenURL: get("VCS_JOBI_TOKEN_URL", ""),
+		UserinfoURL: get("VCS_JOBI_USERINFO_URL", ""), LogoutURL: get("VCS_JOBI_LOGOUT_URL", ""),
+		CallbackPath: get("VCS_JOBI_CALLBACK_PATH", "/api/v1/auth/jobi/callback"),
+		Scopes:       get("VCS_JOBI_SCOPES", "profile email"),
+	}
 
 	origins := get("ALLOWED_ORIGINS", c.PublicURL)
 	for _, o := range strings.Split(origins, ",") {

@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -12,6 +14,7 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -525,5 +528,127 @@ func TestJobsFollowTheVisitorsLanguage(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("job board in english: %+v", list.Jobs)
+	}
+}
+
+// fakeJobi is a minimal JOBI provider: it checks the client credentials, the
+// redirect URI and the PKCE verifier, then returns the employee's profile.
+func fakeJobi(t *testing.T, sub, email string) *httptest.Server {
+	var challenge, redirect string
+	mux := http.NewServeMux()
+	mux.HandleFunc("/authorize", func(w http.ResponseWriter, r *http.Request) {
+		challenge, redirect = r.URL.Query().Get("code_challenge"), r.URL.Query().Get("redirect_uri")
+	})
+	mux.HandleFunc("/token", func(w http.ResponseWriter, r *http.Request) {
+		id, secret, ok := r.BasicAuth()
+		_ = r.ParseForm()
+		sum := sha256.Sum256([]byte(r.PostForm.Get("code_verifier")))
+		if !ok || id != "client-1" || secret != "secret-1" || r.PostForm.Get("code") != "good-code" ||
+			r.PostForm.Get("redirect_uri") != redirect || base64.RawURLEncoding.EncodeToString(sum[:]) != challenge {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]string{"access_token": "tok-1", "token_type": "Bearer"})
+	})
+	mux.HandleFunc("/userinfo", func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer tok-1" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"sub": sub, "name": "Siti Rahma", "email": email, "email_verified": true})
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func TestJobiSignIn(t *testing.T) {
+	e := setup(t)
+	jobi := fakeJobi(t, "jobi-123", "siti@fdcdentalclinic.co.id")
+	e.api.cfg.Jobi = config.JobiConfig{ClientID: "client-1", ClientSecret: "secret-1", AuthorizeURL: jobi.URL + "/authorize",
+		TokenURL: jobi.URL + "/token", UserinfoURL: jobi.URL + "/userinfo", CallbackPath: "/api/v1/auth/jobi/callback", Scopes: "profile email"}
+
+	var prov map[string]bool
+	e.client().json("GET", "/api/v1/auth/providers", nil, &prov)
+	if !prov["jobi"] {
+		t.Fatalf("providers: %v", prov)
+	}
+
+	jar, _ := cookiejar.New(nil)
+	browser := &http.Client{Jar: jar, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	signIn := func(code string) *http.Response {
+		res, err := browser.Get(e.srv.URL + "/api/v1/auth/jobi/login?next=/admin/jobs")
+		if err != nil || res.StatusCode != http.StatusSeeOther {
+			t.Fatalf("login: %v %v", err, res)
+		}
+		loc, _ := url.Parse(res.Header.Get("Location"))
+		if !strings.HasPrefix(loc.String(), jobi.URL+"/authorize") || loc.Query().Get("code_challenge_method") != "S256" {
+			t.Fatalf("authorize redirect: %s", loc)
+		}
+		if _, err := http.Get(loc.String()); err != nil { // the provider records challenge + redirect_uri
+			t.Fatal(err)
+		}
+		cb := e.srv.URL + "/api/v1/auth/jobi/callback?code=" + code + "&state=" + url.QueryEscape(loc.Query().Get("state"))
+		res, err = browser.Get(cb)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return res
+	}
+
+	res := signIn("good-code")
+	if res.StatusCode != http.StatusSeeOther || res.Header.Get("Location") != "/admin/jobs" {
+		t.Fatalf("callback: %d %s", res.StatusCode, res.Header.Get("Location"))
+	}
+	u, err := e.store.GetUserByJobiSub(context.Background(), "jobi-123")
+	if err != nil || u.Role != domain.RoleRecruiter || u.PasswordHash != "" || u.FullName != "Siti Rahma" {
+		t.Fatalf("jobi user: %+v %v", u, err)
+	}
+	// The session works and the user may use the recruiter area.
+	req, _ := http.NewRequest("GET", e.srv.URL+"/api/v1/auth/me", nil)
+	meRes, _ := browser.Do(req)
+	var me struct{ User userDTO }
+	_ = json.NewDecoder(meRes.Body).Decode(&me)
+	if !me.User.CanRecruit || !me.User.ViaJobi {
+		t.Fatalf("me: %+v", me.User)
+	}
+	// Signing in again reuses the same account.
+	signIn("good-code")
+	if n := len(e.store.ListUsersForTest()); n != 1 {
+		t.Fatalf("users after second sign-in: %d", n)
+	}
+	// A JOBI account has no password: password login must fail.
+	if code := e.client().json("POST", "/api/v1/auth/login", map[string]string{"email": "siti@fdcdentalclinic.co.id", "password": ""}, nil); code == 200 {
+		t.Fatal("JOBI account must not log in with an empty password")
+	}
+
+	// A wrong state is refused, and a bad code fails safely.
+	bad, _ := browser.Get(e.srv.URL + "/api/v1/auth/jobi/callback?code=good-code&state=forged")
+	if bad.Header.Get("Location") != "/login?error=jobi_expired" {
+		t.Fatalf("forged state: %s", bad.Header.Get("Location"))
+	}
+	if res := signIn("bad-code"); res.Header.Get("Location") != "/login?error=jobi" {
+		t.Fatalf("bad code: %s", res.Header.Get("Location"))
+	}
+	// An open redirect via ?next is not possible.
+	if safeNext("//evil.example") != "" || safeNext("https://evil.example") != "" || safeNext("/admin") != "/admin" {
+		t.Fatal("safeNext")
+	}
+}
+
+func TestOpenRecruiterAccess(t *testing.T) {
+	e := setup(t)
+	c := e.client()
+	body, ct := registerForm(goodFields, []byte("%PDF-1.4"))
+	c.do("POST", "/api/v1/auth/register", body, ct, nil)
+	if code := c.json("GET", "/api/v1/admin/jobs", nil, nil); code != 403 {
+		t.Fatalf("closed by default: %d", code)
+	}
+	e.api.cfg.OpenRecruiterAccess = true
+	if code := c.json("GET", "/api/v1/admin/jobs", nil, nil); code != 200 {
+		t.Fatalf("open access: %d", code)
+	}
+	if code := c.json("GET", "/api/v1/admin/diagnostics/storage", nil, nil); code != 403 {
+		t.Fatalf("admin-only routes stay admin-only: %d", code)
 	}
 }

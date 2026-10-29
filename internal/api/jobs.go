@@ -38,7 +38,7 @@ func (a *API) listOpenJobs(w http.ResponseWriter, r *http.Request) {
 func (a *API) getJob(w http.ResponseWriter, r *http.Request) {
 	j, err := a.store.GetJobBySlug(r.Context(), r.PathValue("slug"))
 	u := userFrom(r)
-	staff := u != nil && u.Role.IsStaff()
+	staff := a.canRecruit(u)
 	if err != nil || (j.Status != domain.JobOpen && !staff) {
 		writeError(w, http.StatusNotFound, "not_found", "This job is not available.")
 		return

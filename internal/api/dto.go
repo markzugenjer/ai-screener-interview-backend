@@ -19,6 +19,8 @@ type userDTO struct {
 	WhatsApp   string    `json:"whatsapp"` // masked
 	ResumeName string    `json:"resumeName"`
 	CreatedAt  time.Time `json:"createdAt"`
+	CanRecruit bool      `json:"canRecruit"` // may use the recruiter area
+	ViaJobi    bool      `json:"viaJobi"`    // signs in with JOBI (no password)
 }
 
 func (a *API) toUserDTO(u *domain.User) userDTO {
@@ -29,7 +31,7 @@ func (a *API) toUserDTO(u *domain.User) userDTO {
 		}
 	}
 	return userDTO{ID: u.ID, FullName: u.FullName, Email: u.Email, Role: string(u.Role), WhatsApp: phone,
-		ResumeName: u.ResumeName, CreatedAt: u.CreatedAt}
+		ResumeName: u.ResumeName, CreatedAt: u.CreatedAt, CanRecruit: a.canRecruit(u), ViaJobi: u.JobiSub != ""}
 }
 
 type jobDTO struct {
