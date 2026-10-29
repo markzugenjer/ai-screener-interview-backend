@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/markzugenjer/ai-screener-interview-backend/internal/config"
+	"github.com/markzugenjer/ai-screener-interview-backend/internal/llm"
 	"github.com/markzugenjer/ai-screener-interview-backend/internal/security"
 	"github.com/markzugenjer/ai-screener-interview-backend/internal/storage"
 	"github.com/markzugenjer/ai-screener-interview-backend/internal/store"
@@ -25,6 +26,9 @@ type API struct {
 	// (INLINE_JOBS on request-based hosts). Nil means a background worker does it.
 	jobs *worker.Worker
 
+	// translator, when set, translates job postings (needs the model key).
+	translator llm.Completer
+
 	globalLimit    *security.RateLimiter
 	authLimit      *security.RateLimiter
 	interviewLimit *security.RateLimiter
@@ -38,6 +42,12 @@ func New(cfg *config.Config, st store.Store, enc *security.Encryptor, files stor
 		authLimit:      security.NewRateLimiter(20, 12),
 		interviewLimit: security.NewRateLimiter(20, 10),
 	}
+}
+
+// WithTranslator enables automatic job translation.
+func (a *API) WithTranslator(c llm.Completer) *API {
+	a.translator = c
+	return a
 }
 
 // WithInlineJobs makes the API process queued jobs (scoring) itself, inside the
@@ -94,6 +104,7 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/admin/stats", requireStaff(a.adminStats))
 	mux.HandleFunc("GET /api/v1/admin/jobs", requireStaff(a.adminListJobs))
 	mux.HandleFunc("POST /api/v1/admin/jobs", requireStaff(a.adminCreateJob))
+	mux.HandleFunc("POST /api/v1/admin/jobs/translate", requireStaff(a.adminTranslateJob))
 	mux.HandleFunc("GET /api/v1/admin/jobs/{id}", requireStaff(a.adminGetJob))
 	mux.HandleFunc("PUT /api/v1/admin/jobs/{id}", requireStaff(a.adminUpdateJob))
 	mux.HandleFunc("DELETE /api/v1/admin/jobs/{id}", requireAdmin(a.adminDeleteJob))

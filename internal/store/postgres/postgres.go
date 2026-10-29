@@ -209,15 +209,15 @@ func (d *DB) DeleteExpiredSessions(ctx context.Context) (int64, error) {
 const jobCols = `j.id::text, j.title, j.slug, j.division, j.category, j.level, j.location, j.employment_type,
 	j.description, j.requirements, j.skills, j.duration_minutes, j.status, j.weights,
 	COALESCE(j.created_by::text, ''), j.created_at, j.updated_at,
-	(SELECT count(*) FROM questions q WHERE q.job_id = j.id)`
+	(SELECT count(*) FROM questions q WHERE q.job_id = j.id), j.source_lang, j.translations`
 
 func scanJob(row pgx.Row) (*domain.Job, error) {
 	var j domain.Job
 	var status string
-	var reqs, skills, weights []byte
+	var reqs, skills, weights, translations []byte
 	err := row.Scan(&j.ID, &j.Title, &j.Slug, &j.Division, &j.Category, &j.Level, &j.Location, &j.EmploymentType,
 		&j.Description, &reqs, &skills, &j.DurationMinutes, &status, &weights, &j.CreatedBy, &j.CreatedAt,
-		&j.UpdatedAt, &j.QuestionCount)
+		&j.UpdatedAt, &j.QuestionCount, &j.SourceLang, &translations)
 	if err != nil {
 		return nil, mapErr(err)
 	}
@@ -225,13 +225,15 @@ func scanJob(row pgx.Row) (*domain.Job, error) {
 	fromJSON(reqs, &j.Requirements)
 	fromJSON(skills, &j.Skills)
 	fromJSON(weights, &j.Weights)
+	fromJSON(translations, &j.Translations)
 	return &j, nil
 }
 
 func (d *DB) ListJobs(ctx context.Context, f store.JobFilter) ([]domain.Job, error) {
 	q := `SELECT ` + jobCols + ` FROM jobs j WHERE ($1 = '' OR j.status = $1)
 		AND ($2 = '' OR j.division = $2)
-		AND ($3 = '' OR j.title ILIKE '%' || $3 || '%' OR j.description ILIKE '%' || $3 || '%')
+		AND ($3 = '' OR j.title ILIKE '%' || $3 || '%' OR j.description ILIKE '%' || $3 || '%'
+			OR j.translations::text ILIKE '%' || $3 || '%')
 		ORDER BY j.created_at DESC LIMIT 200`
 	rows, err := d.pool.Query(ctx, q, f.Status, f.Division, escapeLike(f.Query))
 	if err != nil {
@@ -268,19 +270,21 @@ func (d *DB) CreateJob(ctx context.Context, j *domain.Job) error {
 	}
 	_, err := d.pool.Exec(ctx, `INSERT INTO jobs (id, title, slug, division, category, level, location,
 		employment_type, description, requirements, skills, duration_minutes, status, weights, created_by,
-		created_at, updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$16)`,
+		created_at, updated_at, source_lang, translations)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$16,$17,$18)`,
 		j.ID, j.Title, j.Slug, j.Division, j.Category, j.Level, j.Location, j.EmploymentType, j.Description,
 		toJSON(j.Requirements), toJSON(j.Skills), j.DurationMinutes, string(j.Status), toJSON(j.Weights),
-		createdBy, j.CreatedAt)
+		createdBy, j.CreatedAt, sourceLang(j), toJSON(translationsOrEmpty(j)))
 	return mapErr(err)
 }
 
 func (d *DB) UpdateJob(ctx context.Context, j *domain.Job) error {
 	tag, err := d.pool.Exec(ctx, `UPDATE jobs SET title=$2, slug=$3, division=$4, category=$5, level=$6,
 		location=$7, employment_type=$8, description=$9, requirements=$10, skills=$11, duration_minutes=$12,
-		status=$13, weights=$14, updated_at=now() WHERE id=$1`,
+		status=$13, weights=$14, source_lang=$15, translations=$16, updated_at=now() WHERE id=$1`,
 		j.ID, j.Title, j.Slug, j.Division, j.Category, j.Level, j.Location, j.EmploymentType, j.Description,
-		toJSON(j.Requirements), toJSON(j.Skills), j.DurationMinutes, string(j.Status), toJSON(j.Weights))
+		toJSON(j.Requirements), toJSON(j.Skills), j.DurationMinutes, string(j.Status), toJSON(j.Weights),
+		sourceLang(j), toJSON(translationsOrEmpty(j)))
 	if err == nil && tag.RowsAffected() == 0 {
 		return store.ErrNotFound
 	}
@@ -400,6 +404,7 @@ func (d *DB) CountAttempts(ctx context.Context, userID, jobID string) (int, erro
 }
 
 const summarySelect = `SELECT ` + interviewCols + `, j.title, j.slug, j.category, j.skills, j.division, j.level,
+	j.source_lang, j.translations,
 	u.full_name, u.email, sc.overall, COALESCE(sc.recommendation, ''), sc.data, sc.technical, sc.communication,
 	COALESCE((SELECT r.decision FROM reviews r WHERE r.interview_id = i.id ORDER BY r.created_at DESC LIMIT 1), '')
 	FROM interviews i
@@ -410,15 +415,16 @@ const summarySelect = `SELECT ` + interviewCols + `, j.title, j.slug, j.category
 func scanSummary(rows pgx.Rows, staff bool) (domain.InterviewSummary, error) {
 	var s interviewScan
 	var out domain.InterviewSummary
-	var skills, data []byte
+	var skills, data, jobTr []byte
 	targets := append(s.targets(), &out.JobTitle, &out.JobSlug, &out.JobCategory, &skills, &out.JobDivision,
-		&out.JobLevel, &out.CandidateName, &out.CandidateEmail, &out.Overall, &out.Recommendation, &data,
+		&out.JobLevel, &out.JobSourceLang, &jobTr, &out.CandidateName, &out.CandidateEmail, &out.Overall, &out.Recommendation, &data,
 		&out.Technical, &out.Communication, &out.Decision)
 	if err := rows.Scan(targets...); err != nil {
 		return out, err
 	}
 	out.Interview = s.finish()
 	fromJSON(skills, &out.JobSkills)
+	fromJSON(jobTr, &out.JobTranslations)
 	if len(data) > 0 {
 		var sc domain.Score
 		fromJSON(data, &sc)
@@ -711,4 +717,18 @@ func summariesByLang(sc *domain.Score) map[string]string {
 		m[l] = sc.CandidateFor(l).Summary
 	}
 	return m
+}
+
+func sourceLang(j *domain.Job) string {
+	if j.SourceLang == "en" {
+		return "en"
+	}
+	return "id"
+}
+
+func translationsOrEmpty(j *domain.Job) map[string]domain.JobText {
+	if j.Translations == nil {
+		return map[string]domain.JobText{}
+	}
+	return j.Translations
 }

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 	"github.com/markzugenjer/ai-screener-interview-backend/internal/domain"
 	"github.com/markzugenjer/ai-screener-interview-backend/internal/security"
 	"github.com/markzugenjer/ai-screener-interview-backend/internal/store"
+	"github.com/markzugenjer/ai-screener-interview-backend/internal/translate"
 )
 
 func (a *API) listOpenJobs(w http.ResponseWriter, r *http.Request) {
@@ -25,9 +27,10 @@ func (a *API) listOpenJobs(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal", "Could not load jobs.")
 		return
 	}
+	lang := domain.NormalizeLanguage(q.Get("lang"))
 	out := make([]jobDTO, 0, len(jobs))
 	for i := range jobs {
-		out = append(out, toJobDTO(&jobs[i], false))
+		out = append(out, toJobDTO(&jobs[i], jobView{Lang: lang}))
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"jobs": out})
 }
@@ -40,7 +43,7 @@ func (a *API) getJob(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "not_found", "This job is not available.")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"job": toJobDTO(j, staff)})
+	writeJSON(w, http.StatusOK, map[string]any{"job": toJobDTO(j, jobView{Staff: staff, Lang: domain.NormalizeLanguage(r.URL.Query().Get("lang"))})})
 }
 
 // ---------- Recruiter ----------
@@ -69,6 +72,10 @@ type jobInput struct {
 	Status          string          `json:"status"`
 	Weights         *domain.Weights `json:"weights"`
 	Questions       []questionInput `json:"questions"`
+	// SourceLang is the language of the fields above ("id" default, or "en");
+	// Translations holds the same public text in the other language.
+	SourceLang   string                    `json:"sourceLang"`
+	Translations map[string]domain.JobText `json:"translations"`
 }
 
 var skillTagRe = regexp.MustCompile(`^[a-z0-9.+#\-]{1,30}$`)
@@ -112,6 +119,27 @@ func (in *jobInput) validate() (*domain.Job, []domain.Question, security.FieldEr
 	}
 	if runes(j.Division) > 60 || runes(j.Category) > 40 || runes(j.Location) > 80 || runes(j.EmploymentType) > 40 {
 		fe["division"] = "Division, category, location and employment type must be short."
+	}
+	j.SourceLang = in.SourceLang
+	if j.SourceLang == "" {
+		j.SourceLang = "id"
+	}
+	if !slices.Contains(domain.JobLanguages, j.SourceLang) {
+		fe["sourceLang"] = "Language must be id or en."
+	}
+	j.Translations = map[string]domain.JobText{}
+	for lang, tr := range in.Translations {
+		if lang == j.SourceLang || !slices.Contains(domain.JobLanguages, lang) {
+			continue
+		}
+		tr, ok := cleanJobText(tr)
+		if !ok {
+			fe["translations."+lang] = "Translated fields must stay within the same limits as the original."
+			continue
+		}
+		if tr.HasText() {
+			j.Translations[lang] = tr
+		}
 	}
 	if !slices.Contains([]string{"junior", "mid", "senior"}, j.Level) {
 		fe["level"] = "Level must be junior, mid or senior."
@@ -247,7 +275,7 @@ func (a *API) adminListJobs(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]jobDTO, 0, len(jobs))
 	for i := range jobs {
-		out = append(out, toJobDTO(&jobs[i], true))
+		out = append(out, toJobDTO(&jobs[i], jobView{Staff: true, Lang: domain.NormalizeLanguage(q.Get("lang"))}))
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"jobs": out})
 }
@@ -268,7 +296,7 @@ func (a *API) adminGetJob(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal", "Could not load questions.")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"job": toJobDTO(j, true), "questions": nonNil(qs)})
+	writeJSON(w, http.StatusOK, map[string]any{"job": toJobDTO(j, jobView{Staff: true, Edit: true}), "questions": nonNil(qs)})
 }
 
 func (a *API) adminCreateJob(w http.ResponseWriter, r *http.Request) {
@@ -282,6 +310,7 @@ func (a *API) adminCreateJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	j.ID = newID()
+	translated := a.autoTranslate(r, j)
 	j.Slug = a.uniqueSlug(r, j.Title, "")
 	j.CreatedBy = userFrom(r).ID
 	j.CreatedAt = time.Now().UTC()
@@ -298,7 +327,7 @@ func (a *API) adminCreateJob(w http.ResponseWriter, r *http.Request) {
 	}
 	j.QuestionCount = len(qs)
 	a.audit(r, "job.create", "job", j.ID, map[string]any{"title": j.Title})
-	writeJSON(w, http.StatusCreated, map[string]any{"job": toJobDTO(j, true)})
+	writeJSON(w, http.StatusCreated, map[string]any{"job": toJobDTO(j, jobView{Staff: true, Edit: true}), "translated": nonNil(translated)})
 }
 
 func (a *API) adminUpdateJob(w http.ResponseWriter, r *http.Request) {
@@ -318,6 +347,7 @@ func (a *API) adminUpdateJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	j.ID = id
+	translated := a.autoTranslate(r, j)
 	j.Slug = existing.Slug
 	if j.Title != existing.Title {
 		j.Slug = a.uniqueSlug(r, j.Title, id)
@@ -333,7 +363,7 @@ func (a *API) adminUpdateJob(w http.ResponseWriter, r *http.Request) {
 	}
 	j.QuestionCount = len(qs)
 	a.audit(r, "job.update", "job", id, nil)
-	writeJSON(w, http.StatusOK, map[string]any{"job": toJobDTO(j, true)})
+	writeJSON(w, http.StatusOK, map[string]any{"job": toJobDTO(j, jobView{Staff: true, Edit: true}), "translated": nonNil(translated)})
 }
 
 func (a *API) adminDeleteJob(w http.ResponseWriter, r *http.Request) {
@@ -348,4 +378,90 @@ func (a *API) adminDeleteJob(w http.ResponseWriter, r *http.Request) {
 	}
 	a.audit(r, "job.delete", "job", id, nil)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// cleanJobText trims a translation and checks it against the same limits as the
+// original fields.
+func cleanJobText(t domain.JobText) (domain.JobText, bool) {
+	out := domain.JobText{
+		Title: strings.TrimSpace(t.Title), Division: strings.TrimSpace(t.Division), Category: strings.TrimSpace(t.Category),
+		Location: strings.TrimSpace(t.Location), EmploymentType: strings.TrimSpace(t.EmploymentType),
+		Description: strings.TrimSpace(t.Description),
+	}
+	if runes(out.Title) > 120 || runes(out.Division) > 60 || runes(out.Category) > 40 || runes(out.Location) > 80 ||
+		runes(out.EmploymentType) > 40 || runes(out.Description) > 6000 {
+		return out, false
+	}
+	reqs, ok := cleanList(t.Requirements, 20, 300)
+	out.Requirements = reqs
+	return out, ok
+}
+
+// otherLanguages are the job languages besides the source.
+func otherLanguages(source string) []string {
+	var out []string
+	for _, l := range domain.JobLanguages {
+		if l != source {
+			out = append(out, l)
+		}
+	}
+	return out
+}
+
+// autoTranslate fills languages the recruiter left empty, using the model when
+// it is configured. Best effort: a failure keeps the job as written (visitors
+// then see the original language) and is reported back as "not translated".
+func (a *API) autoTranslate(r *http.Request, j *domain.Job) (translated []string) {
+	if a.translator == nil {
+		return nil
+	}
+	for _, lang := range otherLanguages(j.SourceLang) {
+		if j.Translations[lang].HasText() {
+			continue
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 45*time.Second)
+		tr, err := translate.Job(ctx, a.translator, j.SourceLang, lang, j.Base())
+		cancel()
+		if err != nil {
+			a.log.Warn("auto-translate job", "job", j.ID, "lang", lang, "err", err)
+			continue
+		}
+		j.Translations[lang] = tr
+		translated = append(translated, lang)
+	}
+	return translated
+}
+
+type translateInput struct {
+	From string         `json:"from"`
+	To   string         `json:"to"`
+	Text domain.JobText `json:"text"`
+}
+
+// adminTranslateJob translates the job text in the form, for the recruiter to
+// review before saving.
+func (a *API) adminTranslateJob(w http.ResponseWriter, r *http.Request) {
+	if a.translator == nil {
+		writeError(w, http.StatusServiceUnavailable, "translation_unavailable",
+			"Automatic translation is not set up yet (it needs ANTHROPIC_API_KEY). You can type the translation yourself.")
+		return
+	}
+	var in translateInput
+	if !readJSON(w, r, &in) {
+		return
+	}
+	text, ok := cleanJobText(in.Text)
+	if !ok || !translate.Supported(in.From) || !translate.Supported(in.To) || in.From == in.To || !text.HasText() {
+		writeError(w, http.StatusBadRequest, "invalid", "Fill in the job text first, then translate.")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
+	defer cancel()
+	out, err := translate.Job(ctx, a.translator, in.From, in.To, text)
+	if err != nil {
+		a.log.Error("translate job", "err", err)
+		writeError(w, http.StatusBadGateway, "translation_failed", "The translation could not be made right now. Please try again.")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"text": out})
 }

@@ -71,6 +71,9 @@ func run() error {
 	w := &worker.Worker{Store: st, LLM: llm.NewAnthropic(cfg.AnthropicAPIKey, cfg.AnthropicModel, cfg.AnthropicBaseURL),
 		Language: cfg.FeedbackLanguage, Log: log.With("component", "worker")}
 	handler := api.New(cfg, st, enc, files, log)
+	if cfg.AnthropicAPIKey != "" {
+		handler.WithTranslator(llm.NewAnthropic(cfg.AnthropicAPIKey, cfg.TranslateModel, cfg.AnthropicBaseURL))
+	}
 	writeTimeout := 60 * time.Second
 	switch {
 	case cfg.InlineJobs:

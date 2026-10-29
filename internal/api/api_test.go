@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"mime/multipart"
@@ -31,6 +32,7 @@ type env struct {
 	t     *testing.T
 	srv   *httptest.Server
 	store *memory.Store
+	api   *API
 }
 
 func setup(t *testing.T) *env {
@@ -54,7 +56,7 @@ func setup(t *testing.T) *env {
 	a.authLimit = security.NewRateLimiter(1000, 1000) // rate limiting has its own unit test
 	srv := httptest.NewServer(a.Handler())
 	t.Cleanup(srv.Close)
-	return &env{t: t, srv: srv, store: st}
+	return &env{t: t, srv: srv, store: st, api: a}
 }
 
 type client struct {
@@ -445,5 +447,83 @@ func TestStorageSelfTestIsAdminOnly(t *testing.T) {
 	}
 	if code := adm.json("GET", "/api/v1/admin/diagnostics/storage", nil, &out); code != 200 || !out.OK || len(out.Steps) != 3 {
 		t.Fatalf("self-test: %d %+v", code, out)
+	}
+}
+
+// fakeTranslator answers job translations with a fixed English text.
+type fakeTranslator struct{ calls int }
+
+func (f *fakeTranslator) Complete(context.Context, string, string, int) (string, error) {
+	f.calls++
+	return `{"title":"Clinic Staff","division":"Operations","category":"Non-Technical","location":"Jakarta",
+	"employmentType":"Full-time","description":"FDC Dental Clinic is looking for clinic staff.","requirements":["High school diploma"]}`, nil
+}
+func (f *fakeTranslator) Model() string { return "fake" }
+
+func TestJobsFollowTheVisitorsLanguage(t *testing.T) {
+	e := setup(t)
+	tr := &fakeTranslator{}
+	e.api.WithTranslator(tr)
+	ctx := context.Background()
+	if _, err := app.CreateStaff(ctx, e.store, "Ada", "ada@company.com", "admin-pass-12345", domain.RoleAdmin); err != nil {
+		t.Fatal(err)
+	}
+	adm := e.client()
+	adm.json("POST", "/api/v1/auth/login", map[string]string{"email": "ada@company.com", "password": "admin-pass-12345"}, nil)
+	q := func(n int) map[string]any {
+		return map[string]any{"skill": "Pelayanan", "difficulty": 1, "type": "soft", "text": fmt.Sprintf("Pertanyaan nomor %d?", n), "expectedPoints": []string{"x"}}
+	}
+	job := map[string]any{"title": "Staff Klinik", "division": "Operasional", "category": "Non-Teknis", "level": "junior",
+		"location": "Jakarta", "employmentType": "Penuh waktu", "description": "FDC Dental Clinic sedang mencari staff klinik.",
+		"requirements": []string{"Minimal SMA"}, "status": "open", "sourceLang": "id",
+		"questions": []map[string]any{q(1), q(2), q(3)}}
+	var created struct {
+		Job        jobDTO
+		Translated []string
+	}
+	if code := adm.json("POST", "/api/v1/admin/jobs", job, &created); code != 201 {
+		t.Fatalf("create: %d", code)
+	}
+	if tr.calls != 1 || len(created.Translated) != 1 || created.Translated[0] != "en" {
+		t.Fatalf("auto-translate: calls=%d translated=%v", tr.calls, created.Translated)
+	}
+	if created.Job.Title != "Staff Klinik" || created.Job.Translations["en"].Title != "Clinic Staff" {
+		t.Fatalf("editor view: %+v", created.Job)
+	}
+
+	visitor := e.client()
+	var en, id struct{ Job jobDTO }
+	visitor.json("GET", "/api/v1/jobs/"+created.Job.Slug+"?lang=en", nil, &en)
+	visitor.json("GET", "/api/v1/jobs/"+created.Job.Slug+"?lang=id", nil, &id)
+	if en.Job.Title != "Clinic Staff" || en.Job.Requirements[0] != "High school diploma" || en.Job.Lang != "en" {
+		t.Fatalf("english: %+v", en.Job)
+	}
+	if id.Job.Title != "Staff Klinik" || id.Job.Requirements[0] != "Minimal SMA" || id.Job.Lang != "id" {
+		t.Fatalf("indonesian: %+v", id.Job)
+	}
+	if en.Job.Translations != nil {
+		t.Fatal("visitors must not receive the editor's translation map")
+	}
+
+	// A recruiter's own translation is kept as written (no model call).
+	job["translations"] = map[string]any{"en": map[string]any{"title": "Clinic Assistant", "description": "Own text"}}
+	var updated struct{ Job jobDTO }
+	if code := adm.json("PUT", "/api/v1/admin/jobs/"+created.Job.ID, job, &updated); code != 200 {
+		t.Fatalf("update: %d", code)
+	}
+	if tr.calls != 1 || updated.Job.Translations["en"].Title != "Clinic Assistant" {
+		t.Fatalf("manual translation: calls=%d %+v", tr.calls, updated.Job.Translations)
+	}
+	visitor.json("GET", "/api/v1/jobs?lang=en", nil, &struct{}{})
+	var list struct{ Jobs []jobDTO }
+	visitor.json("GET", "/api/v1/jobs?lang=en", nil, &list)
+	found := false
+	for _, j := range list.Jobs {
+		if j.Slug == created.Job.Slug {
+			found = j.Title == "Clinic Assistant" && j.Division == "Operasional" // missing field falls back
+		}
+	}
+	if !found {
+		t.Fatalf("job board in english: %+v", list.Jobs)
 	}
 }

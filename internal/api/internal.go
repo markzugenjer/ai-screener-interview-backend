@@ -46,10 +46,12 @@ func (a *API) internalContext(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "not_found", "Candidate not found.")
 		return
 	}
+	jobID := j.Text("id")
 	writeJSON(w, http.StatusOK, map[string]any{
 		"interview": map[string]any{"id": iv.ID, "status": iv.Status, "roomName": iv.RoomName, "isPractice": iv.IsPractice},
-		"job": map[string]any{"title": j.Title, "level": j.Level, "division": j.Division, "skills": nonNil(j.Skills),
-			"description": j.Description, "durationMinutes": j.DurationMinutes},
+		// The interview is held in Bahasa Indonesia, so the agent gets the Indonesian text.
+		"job": map[string]any{"title": jobID.Title, "level": j.Level, "division": jobID.Division, "skills": nonNil(j.Skills),
+			"description": jobID.Description, "durationMinutes": j.DurationMinutes},
 		"candidate": map[string]any{"firstName": firstName(u.FullName)},
 		"questions": nonNil(qs),
 		"language":  "id-ID",

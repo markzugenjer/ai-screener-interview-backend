@@ -129,6 +129,11 @@ func Demo(ctx context.Context, s store.Store) (bool, error) {
 		qs  []q
 	}{
 		{domain.Job{
+			SourceLang: "en", Translations: map[string]domain.JobText{"id": {
+				Title: "Junior Frontend Developer", Division: "Engineering", Category: "Teknis",
+				Location: "Yogyakarta (Hybrid)", EmploymentType: "Penuh waktu",
+				Description: "Bangun antarmuka web yang cepat dan mudah diakses dengan React, Next.js, dan Tailwind CSS bersama tim produk dan desain kami.",
+			}},
 			Title: "Junior Frontend Developer", Slug: "junior-frontend-developer", Division: "Engineering",
 			Category: "Technical", Level: "junior", Location: "Yogyakarta (Hybrid)", EmploymentType: "Full-time",
 			Description:  "Build fast, accessible web interfaces with React, Next.js and Tailwind CSS together with our product and design team.",
@@ -136,6 +141,11 @@ func Demo(ctx context.Context, s store.Store) (bool, error) {
 			Skills:       []string{"react", "tailwind", "javascript"}, DurationMinutes: 20,
 		}, frontend},
 		{domain.Job{
+			SourceLang: "en", Translations: map[string]domain.JobText{"id": {
+				Title: "Junior Backend Developer (Go)", Division: "Engineering", Category: "Teknis",
+				Location: "Remote (Indonesia)", EmploymentType: "Penuh waktu",
+				Description: "Rancang dan bangun REST API yang andal dengan Go dan PostgreSQL, serta bantu menjaga layanan kami tetap cepat dan aman.",
+			}},
 			Title: "Junior Backend Developer (Go)", Slug: "junior-backend-developer-go", Division: "Engineering",
 			Category: "Technical", Level: "junior", Location: "Remote (Indonesia)", EmploymentType: "Full-time",
 			Description:  "Design and build reliable REST APIs in Go with PostgreSQL, and help keep our services fast and secure.",

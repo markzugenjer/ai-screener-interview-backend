@@ -62,10 +62,11 @@ func (a *API) adminResults(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal", "Could not load results.")
 		return
 	}
+	lang := domain.NormalizeLanguage(r.URL.Query().Get("lang"))
 	out := make([]resultRowDTO, 0, len(rows))
 	for i := range rows {
 		s := &rows[i]
-		out = append(out, resultRowDTO{interviewDTO: summaryDTO(s, ""), CandidateName: s.CandidateName,
+		out = append(out, resultRowDTO{interviewDTO: summaryDTO(s, lang), CandidateName: s.CandidateName,
 			CandidateEmail: s.CandidateEmail, Recommendation: s.Recommendation, Technical: s.Technical,
 			Communication: s.Communication, Decision: s.Decision})
 	}
@@ -103,7 +104,7 @@ func (a *API) adminResult(w http.ResponseWriter, r *http.Request) {
 		"interview": toInterviewDTO(iv),
 		"integrity": iv.Integrity,
 		"lastError": iv.LastError,
-		"job":       toJobDTO(j, true),
+		"job":       toJobDTO(j, jobView{Staff: true, Lang: domain.NormalizeLanguage(r.URL.Query().Get("lang"))}),
 		"candidate": map[string]any{
 			"id": cand.ID, "fullName": cand.FullName, "email": cand.Email, "whatsapp": phone,
 			"resumeName": cand.ResumeName, "hasResume": cand.ResumeKey != "", "createdAt": cand.CreatedAt,

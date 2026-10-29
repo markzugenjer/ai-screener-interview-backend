@@ -50,16 +50,46 @@ type jobDTO struct {
 	Weights         *domain.Weights `json:"weights,omitempty"`
 	CreatedAt       time.Time       `json:"createdAt"`
 	UpdatedAt       time.Time       `json:"updatedAt"`
+	// Lang is the language the text fields are in; SourceLang and Translations
+	// are only sent to the job editor.
+	Lang         string                    `json:"lang"`
+	SourceLang   string                    `json:"sourceLang,omitempty"`
+	Translations map[string]domain.JobText `json:"translations,omitempty"`
 }
 
-func toJobDTO(j *domain.Job, staff bool) jobDTO {
-	d := jobDTO{ID: j.ID, Title: j.Title, Slug: j.Slug, Division: j.Division, Category: j.Category,
-		Level: j.Level, Location: j.Location, EmploymentType: j.EmploymentType, Description: j.Description,
-		Requirements: nonNil(j.Requirements), Skills: nonNil(j.Skills), DurationMinutes: j.DurationMinutes,
-		Status: string(j.Status), QuestionCount: j.QuestionCount, CreatedAt: j.CreatedAt, UpdatedAt: j.UpdatedAt}
-	if staff {
+// jobView says who sees a job and in which language: Lang "" means the source
+// language; Edit sends the original plus every translation (job editor).
+type jobView struct {
+	Staff bool
+	Edit  bool
+	Lang  string
+}
+
+func toJobDTO(j *domain.Job, v jobView) jobDTO {
+	lang := v.Lang
+	if lang == "" || v.Edit {
+		lang = j.SourceLang
+	}
+	if lang == "" {
+		lang = "id"
+	}
+	t := j.Text(lang)
+	d := jobDTO{ID: j.ID, Title: t.Title, Slug: j.Slug, Division: t.Division, Category: t.Category,
+		Level: j.Level, Location: t.Location, EmploymentType: t.EmploymentType, Description: t.Description,
+		Requirements: nonNil(t.Requirements), Skills: nonNil(j.Skills), DurationMinutes: j.DurationMinutes,
+		Status: string(j.Status), QuestionCount: j.QuestionCount, CreatedAt: j.CreatedAt, UpdatedAt: j.UpdatedAt,
+		Lang: lang}
+	if v.Staff {
 		w := j.Weights
 		d.Weights = &w
+	}
+	if v.Edit {
+		d.SourceLang = j.SourceLang
+		d.Translations = map[string]domain.JobText{}
+		for k, tr := range j.Translations {
+			tr.Requirements = nonNil(tr.Requirements)
+			d.Translations[k] = tr
+		}
 	}
 	return d
 }
@@ -117,8 +147,9 @@ func toInterviewDTO(iv *domain.Interview) interviewDTO {
 
 func summaryDTO(s *domain.InterviewSummary, lang string) interviewDTO {
 	d := toInterviewDTO(&s.Interview)
-	d.Job = &jobBrief{Title: s.JobTitle, Slug: s.JobSlug, Category: s.JobCategory, Level: s.JobLevel,
-		Division: s.JobDivision, Skills: nonNil(s.JobSkills)}
+	jt := s.JobText(lang)
+	d.Job = &jobBrief{Title: jt.Title, Slug: s.JobSlug, Category: jt.Category, Level: s.JobLevel,
+		Division: jt.Division, Skills: nonNil(s.JobSkills)}
 	d.Overall = s.Overall
 	d.Summary = s.Summary
 	if v := s.SummaryByLang[lang]; v != "" {

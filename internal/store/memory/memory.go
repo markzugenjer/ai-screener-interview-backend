@@ -328,6 +328,7 @@ func (s *Store) summary(iv *domain.Interview, staff bool) domain.InterviewSummar
 	if j, ok := s.jobs[iv.JobID]; ok {
 		out.JobTitle, out.JobSlug, out.JobCategory = j.Title, j.Slug, j.Category
 		out.JobSkills, out.JobDivision, out.JobLevel = j.Skills, j.Division, j.Level
+		out.JobSourceLang, out.JobTranslations = j.SourceLang, j.Translations
 	}
 	if u, ok := s.users[iv.UserID]; ok {
 		out.CandidateName, out.CandidateEmail = u.FullName, u.Email

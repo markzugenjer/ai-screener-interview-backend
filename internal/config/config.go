@@ -44,6 +44,7 @@ type Config struct {
 	AnthropicAPIKey  string
 	AnthropicModel   string
 	AnthropicBaseURL string
+	TranslateModel   string // job posting translation (a fast model is enough)
 
 	// Worker
 	RunWorkerInAPI bool // run the scoring worker inside the API process (handy for local dev)
@@ -86,6 +87,7 @@ func Load() (*Config, error) {
 		AnthropicAPIKey:  Env("ANTHROPIC_API_KEY"),
 		AnthropicModel:   get("ANTHROPIC_MODEL", "claude-sonnet-5-5"),
 		AnthropicBaseURL: get("ANTHROPIC_BASE_URL", "https://api.anthropic.com"),
+		TranslateModel:   get("TRANSLATE_MODEL", "claude-haiku-5-5"),
 		RunWorkerInAPI:   getBool("RUN_WORKER_IN_API", false),
 		FeedbackLanguage: get("FEEDBACK_LANGUAGE", "English"),
 		InlineJobs:       getBool("INLINE_JOBS", false),

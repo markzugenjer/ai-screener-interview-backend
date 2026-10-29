@@ -1,7 +1,10 @@
 // Package domain defines the core data types shared by the API, store and worker.
 package domain
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 type Role string
 
@@ -83,6 +86,66 @@ type Job struct {
 	CreatedAt       time.Time
 	UpdatedAt       time.Time
 	QuestionCount   int // filled in list queries
+
+	// SourceLang is the language the fields above are written in ("id" or "en").
+	// Translations holds the same public text in the other language(s).
+	SourceLang   string
+	Translations map[string]JobText
+}
+
+// JobText is the candidate-facing text of a job in one language. The question
+// bank is not part of it: interviews are always held in Bahasa Indonesia.
+type JobText struct {
+	Title          string   `json:"title"`
+	Division       string   `json:"division"`
+	Category       string   `json:"category"`
+	Location       string   `json:"location"`
+	EmploymentType string   `json:"employmentType"`
+	Description    string   `json:"description"`
+	Requirements   []string `json:"requirements"`
+}
+
+// Languages a job can be written in.
+var JobLanguages = []string{"id", "en"}
+
+// Base is the job's text in its source language.
+func (j *Job) Base() JobText {
+	return JobText{Title: j.Title, Division: j.Division, Category: j.Category, Location: j.Location,
+		EmploymentType: j.EmploymentType, Description: j.Description, Requirements: j.Requirements}
+}
+
+// Text returns the job's text in lang. Any field missing from the translation
+// falls back to the source language, so a page never shows a blank.
+func (j *Job) Text(lang string) JobText {
+	base := j.Base()
+	if lang == "" || lang == j.SourceLang {
+		return base
+	}
+	tr, ok := j.Translations[lang]
+	if !ok {
+		return base
+	}
+	pick := func(v, fallback string) string {
+		if strings.TrimSpace(v) == "" {
+			return fallback
+		}
+		return v
+	}
+	out := JobText{
+		Title: pick(tr.Title, base.Title), Division: pick(tr.Division, base.Division),
+		Category: pick(tr.Category, base.Category), Location: pick(tr.Location, base.Location),
+		EmploymentType: pick(tr.EmploymentType, base.EmploymentType), Description: pick(tr.Description, base.Description),
+		Requirements: tr.Requirements,
+	}
+	if len(out.Requirements) == 0 {
+		out.Requirements = base.Requirements
+	}
+	return out
+}
+
+// HasText reports whether a translation carries any text at all.
+func (t JobText) HasText() bool {
+	return strings.TrimSpace(t.Title+t.Description) != "" || len(t.Requirements) > 0
 }
 
 type Question struct {
@@ -215,21 +278,32 @@ type Review struct {
 type InterviewSummary struct {
 	Interview
 	// SummaryByLang holds the candidate summary per language (candidate lists only).
-	SummaryByLang  map[string]string
-	JobTitle       string
-	JobSlug        string
-	JobCategory    string
-	JobSkills      []string
-	JobDivision    string
-	JobLevel       string
-	CandidateName  string
-	CandidateEmail string
-	Overall        *int
-	Recommendation string
-	Summary        string // candidate-facing summary for candidates, recruiter summary for staff
-	Technical      *float64
-	Communication  *float64
-	Decision       string // last recruiter decision
+	SummaryByLang map[string]string
+	JobTitle      string
+	JobSlug       string
+	JobCategory   string
+	JobSkills     []string
+	JobDivision   string
+	JobLevel      string
+	// The job's source language and translations, so lists can show the job
+	// title in the visitor's language.
+	JobSourceLang   string
+	JobTranslations map[string]JobText
+	CandidateName   string
+	CandidateEmail  string
+	Overall         *int
+	Recommendation  string
+	Summary         string // candidate-facing summary for candidates, recruiter summary for staff
+	Technical       *float64
+	Communication   *float64
+	Decision        string // last recruiter decision
+}
+
+// JobText returns the summary's job text (title, category, division) in lang.
+func (s *InterviewSummary) JobText(lang string) JobText {
+	j := Job{Title: s.JobTitle, Category: s.JobCategory, Division: s.JobDivision,
+		SourceLang: s.JobSourceLang, Translations: s.JobTranslations}
+	return j.Text(lang)
 }
 
 type ResultFilter struct {

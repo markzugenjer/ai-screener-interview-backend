@@ -94,8 +94,9 @@ func (a *API) getInterview(w http.ResponseWriter, r *http.Request) {
 	}
 	dto := toInterviewDTO(iv)
 	if j, err := a.store.GetJob(r.Context(), iv.JobID); err == nil {
-		dto.Job = &jobBrief{Title: j.Title, Slug: j.Slug, Category: j.Category, Level: j.Level,
-			Division: j.Division, Skills: nonNil(j.Skills), DurationMinutes: j.DurationMinutes}
+		jt := j.Text(domain.NormalizeLanguage(r.URL.Query().Get("lang")))
+		dto.Job = &jobBrief{Title: jt.Title, Slug: j.Slug, Category: jt.Category, Level: j.Level,
+			Division: jt.Division, Skills: nonNil(j.Skills), DurationMinutes: j.DurationMinutes}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"interview": dto})
 }
@@ -263,8 +264,9 @@ func (a *API) feedback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	dto := toInterviewDTO(iv)
-	dto.Job = &jobBrief{Title: j.Title, Slug: j.Slug, Category: j.Category, Level: j.Level,
-		Division: j.Division, Skills: nonNil(j.Skills), DurationMinutes: j.DurationMinutes}
+	jt := j.Text(feedbackLang(r))
+	dto.Job = &jobBrief{Title: jt.Title, Slug: j.Slug, Category: jt.Category, Level: j.Level,
+		Division: jt.Division, Skills: nonNil(j.Skills), DurationMinutes: j.DurationMinutes}
 	resp := map[string]any{"interview": dto}
 	sc, err := a.store.GetScore(r.Context(), iv.ID)
 	switch {
