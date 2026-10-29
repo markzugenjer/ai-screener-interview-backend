@@ -103,7 +103,7 @@ practice and hidden from recruiters by default.
 | CSRF | Double-submit token (`X-CSRF-Token` header must match the `ais_csrf` cookie) plus an `Origin` allow-list on every state-changing request |
 | Encryption at rest | AES-256-GCM for WhatsApp numbers and resume files, bound to the owning user (a ciphertext copied to another row fails to decrypt) |
 | Encryption in transit | Serve the site and API over HTTPS only (`COOKIE_SECURE=true` is enforced in production); HSTS header is set |
-| Brute force | Per-IP rate limits (stricter on login/register), 15-minute lockout after 5 failed logins |
+| Brute force | Per-IP rate limits (stricter on login/register), 15-minute lockout after 10 failed logins |
 | Uploads | 5 MB limit, file type detected from content (PDF/DOCX only), sanitized names, random storage keys, never served inline |
 | Input | Strict JSON decoding (unknown fields rejected, size-limited), validation on every field, parameterized SQL only |
 | Access control | Role checks on every recruiter route; candidates can only read their own interviews (others get 404) |

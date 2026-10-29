@@ -15,7 +15,7 @@ import (
 )
 
 const (
-	maxFailedLogins = 5
+	maxFailedLogins = 10 // wrong passwords in a row before the account locks
 	lockoutDuration = 15 * time.Minute
 )
 

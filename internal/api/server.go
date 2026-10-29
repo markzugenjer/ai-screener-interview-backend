@@ -33,8 +33,9 @@ type API struct {
 func New(cfg *config.Config, st store.Store, enc *security.Encryptor, files storage.Files, log *slog.Logger) *API {
 	return &API{
 		cfg: cfg, store: st, enc: enc, files: files, log: log,
-		globalLimit:    security.NewRateLimiter(300, 120),
-		authLimit:      security.NewRateLimiter(10, 5),
+		globalLimit: security.NewRateLimiter(300, 120),
+		// Room for maxFailedLogins attempts plus the right one before the per-IP limit applies.
+		authLimit:      security.NewRateLimiter(20, 12),
 		interviewLimit: security.NewRateLimiter(20, 10),
 	}
 }
