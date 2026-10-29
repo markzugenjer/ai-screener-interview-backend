@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -15,6 +16,12 @@ import (
 
 // fakeVCS mimics the signer plus the bucket: grants point back at itself.
 func fakeVCS(t *testing.T) (*httptest.Server, map[string][]byte) {
+	return fakeVCSWith(t, false)
+}
+
+// fakeVCSWith: wrapped=true answers {"grant": {...}} and lists no headers, the way
+// a signer may; the bucket still insists on the signed Content-Type for uploads.
+func fakeVCSWith(t *testing.T, wrapped bool) (*httptest.Server, map[string][]byte) {
 	var mu sync.Mutex
 	objects := map[string][]byte{}
 	var srv *httptest.Server
@@ -32,10 +39,26 @@ func fakeVCS(t *testing.T) (*httptest.Server, map[string][]byte) {
 			if !strings.HasPrefix(key, "files/") {
 				t.Errorf("key without prefix: %s", key)
 			}
-			_ = json.NewEncoder(w).Encode(map[string]any{"url": srv.URL + "/obj/" + key, "headers": map[string]string{"X-Signed": "1"}})
+			if req["action"] == "upload" && req["content_type"] != "application/octet-stream" {
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = w.Write([]byte(`{"error":{"code":"invalid_content_type"}}`))
+				return
+			}
+			grant := map[string]any{"url": srv.URL + "/obj/" + key + "?sig=1", "headers": map[string][]string{"X-Signed": {"1"}}}
+			if wrapped {
+				grant = map[string]any{"grant": map[string]any{"url": srv.URL + "/obj/" + key + "?sig=1", "method": "put"}}
+			}
+			if req["action"] != "upload" && wrapped {
+				grant = map[string]any{"grant": map[string]any{"url": srv.URL + "/obj/" + key + "?sig=1"}}
+			}
+			_ = json.NewEncoder(w).Encode(grant)
 			return
 		}
-		if r.Header.Get("X-Signed") != "1" {
+		if r.URL.Query().Get("sig") != "1" || (!wrapped && r.Header.Get("X-Signed") != "1") {
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+		if r.Method == http.MethodPut && r.Header.Get("Content-Type") != "application/octet-stream" {
 			w.WriteHeader(http.StatusForbidden)
 			return
 		}
@@ -90,5 +113,33 @@ func TestVCSRoundTripEncrypted(t *testing.T) {
 	}
 	if _, err := v.Get(ctx, "../etc/passwd", "user-1"); err != ErrBadKey {
 		t.Fatal("bad key must be rejected")
+	}
+}
+
+func TestVCSWrappedGrantAndSignedContentType(t *testing.T) {
+	srv, _ := fakeVCSWith(t, true)
+	enc, _ := security.NewEncryptor(make([]byte, 32))
+	v, _ := NewVCS(srv.URL+"/sign", "tok", enc)
+	ctx := context.Background()
+	key, err := v.Put(ctx, []byte("resume"), ".pdf", "u")
+	if err != nil {
+		t.Fatalf("put: %v", err)
+	}
+	if got, err := v.Get(ctx, key, "u"); err != nil || string(got) != "resume" {
+		t.Fatalf("get = %q, %v", got, err)
+	}
+}
+
+func TestVCSErrorsNameTheStep(t *testing.T) {
+	srv, _ := fakeVCS(t)
+	enc, _ := security.NewEncryptor(make([]byte, 32))
+	v, _ := NewVCS(srv.URL+"/sign", "wrong-token", enc)
+	_, err := v.Put(context.Background(), []byte("x"), ".pdf", "u")
+	var se *StorageError
+	if !errors.As(err, &se) || se.Step != "grant-upload" || se.Status != http.StatusUnauthorized {
+		t.Fatalf("err = %v", err)
+	}
+	if strings.Contains(err.Error(), srv.URL) || strings.Contains(err.Error(), "wrong-token") {
+		t.Fatal("errors must not contain URLs or tokens")
 	}
 }

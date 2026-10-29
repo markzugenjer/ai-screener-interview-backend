@@ -76,14 +76,14 @@ func Load() (*Config, error) {
 		CookieSecure:     getBool("COOKIE_SECURE", false),
 		SessionTTL:       getDuration("SESSION_TTL", 7*24*time.Hour),
 		TrustProxy:       getBool("TRUST_PROXY", true),
-		InternalSecret:   os.Getenv("INTERNAL_API_SECRET"),
+		InternalSecret:   Env("INTERNAL_API_SECRET"),
 		MaxResumeBytes:   int64(getInt("MAX_RESUME_MB", 5)) << 20,
 		StorageDir:       get("STORAGE_DIR", "./data/files"),
-		LiveKitURL:       os.Getenv("LIVEKIT_URL"),
-		LiveKitAPIKey:    os.Getenv("LIVEKIT_API_KEY"),
-		LiveKitAPISecret: os.Getenv("LIVEKIT_API_SECRET"),
+		LiveKitURL:       Env("LIVEKIT_URL"),
+		LiveKitAPIKey:    Env("LIVEKIT_API_KEY"),
+		LiveKitAPISecret: Env("LIVEKIT_API_SECRET"),
 		LiveKitAgentName: get("LIVEKIT_AGENT_NAME", "ai-screener"),
-		AnthropicAPIKey:  os.Getenv("ANTHROPIC_API_KEY"),
+		AnthropicAPIKey:  Env("ANTHROPIC_API_KEY"),
 		AnthropicModel:   get("ANTHROPIC_MODEL", "claude-sonnet-5-5"),
 		AnthropicBaseURL: get("ANTHROPIC_BASE_URL", "https://api.anthropic.com"),
 		RunWorkerInAPI:   getBool("RUN_WORKER_IN_API", false),
@@ -103,7 +103,7 @@ func Load() (*Config, error) {
 		}
 	}
 
-	key := os.Getenv("APP_ENCRYPTION_KEY")
+	key := Env("APP_ENCRYPTION_KEY")
 	if key == "" {
 		return nil, errors.New("APP_ENCRYPTION_KEY is required (32 random bytes, base64). Generate one with: openssl rand -base64 32")
 	}
@@ -132,10 +132,21 @@ func (c *Config) LiveKitConfigured() bool {
 }
 
 func get(k, def string) string {
-	if v := strings.TrimSpace(os.Getenv(k)); v != "" {
+	if v := Env(k); v != "" {
 		return v
 	}
 	return def
+}
+
+// Env reads a variable, trimming spaces and one pair of surrounding quotes, so a
+// value copied from a .env file as KEY="value" works whether or not the host
+// kept the quotes.
+func Env(k string) string {
+	v := strings.TrimSpace(os.Getenv(k))
+	if len(v) >= 2 && (v[0] == '"' || v[0] == '\'') && v[len(v)-1] == v[0] {
+		v = v[1 : len(v)-1]
+	}
+	return v
 }
 
 func getBool(k string, def bool) bool {

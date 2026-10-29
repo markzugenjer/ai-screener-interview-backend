@@ -6,10 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"os"
-	"strings"
 	"time"
 
+	"github.com/markzugenjer/ai-screener-interview-backend/internal/config"
 	"github.com/markzugenjer/ai-screener-interview-backend/internal/domain"
 	"github.com/markzugenjer/ai-screener-interview-backend/internal/security"
 	"github.com/markzugenjer/ai-screener-interview-backend/internal/store"
@@ -53,15 +52,15 @@ func CreateStaff(ctx context.Context, st store.Store, name, email, password stri
 // BootstrapAdmin creates the first admin from ADMIN_EMAIL / ADMIN_PASSWORD /
 // ADMIN_NAME when that email does not exist yet. Remove the variables afterwards.
 func BootstrapAdmin(ctx context.Context, st store.Store, log *slog.Logger) error {
-	email := strings.TrimSpace(os.Getenv("ADMIN_EMAIL"))
-	pw := os.Getenv("ADMIN_PASSWORD")
+	email := config.Env("ADMIN_EMAIL")
+	pw := config.Env("ADMIN_PASSWORD")
 	if email == "" || pw == "" {
 		return nil
 	}
 	if _, err := st.GetUserByEmail(ctx, email); err == nil {
 		return nil
 	}
-	name := os.Getenv("ADMIN_NAME")
+	name := config.Env("ADMIN_NAME")
 	if name == "" {
 		name = "Admin"
 	}

@@ -421,3 +421,29 @@ func TestSameHostOrigin(t *testing.T) {
 		}
 	}
 }
+
+func TestStorageSelfTestIsAdminOnly(t *testing.T) {
+	e := setup(t)
+	ctx := context.Background()
+	if _, err := app.CreateStaff(ctx, e.store, "Rina", "rina@company.com", "recruiter-pass-123", domain.RoleRecruiter); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := app.CreateStaff(ctx, e.store, "Ada", "ada@company.com", "admin-pass-12345", domain.RoleAdmin); err != nil {
+		t.Fatal(err)
+	}
+	rec := e.client()
+	rec.json("POST", "/api/v1/auth/login", map[string]string{"email": "rina@company.com", "password": "recruiter-pass-123"}, nil)
+	if code := rec.json("GET", "/api/v1/admin/diagnostics/storage", nil, nil); code != 403 {
+		t.Fatalf("recruiter must not run the self-test: %d", code)
+	}
+	adm := e.client()
+	adm.json("POST", "/api/v1/auth/login", map[string]string{"email": "ada@company.com", "password": "admin-pass-12345"}, nil)
+	var out struct {
+		Backend string
+		OK      bool
+		Steps   []diagStep
+	}
+	if code := adm.json("GET", "/api/v1/admin/diagnostics/storage", nil, &out); code != 200 || !out.OK || len(out.Steps) != 3 {
+		t.Fatalf("self-test: %d %+v", code, out)
+	}
+}

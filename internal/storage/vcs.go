@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/markzugenjer/ai-screener-interview-backend/internal/security"
@@ -27,7 +28,19 @@ type VCS struct {
 	client *http.Client
 }
 
-const vcsPrefix = "files/"
+const (
+	vcsPrefix         = "files/"
+	uploadContentType = "application/octet-stream" // files are encrypted, so the bytes are opaque
+)
+
+func hasHeader(h map[string]string, name string) bool {
+	for k := range h {
+		if strings.EqualFold(k, name) {
+			return true
+		}
+	}
+	return false
+}
 
 func NewVCS(url, token string, enc *security.Encryptor) (*VCS, error) {
 	if url == "" || token == "" {
@@ -37,36 +50,124 @@ func NewVCS(url, token string, enc *security.Encryptor) (*VCS, error) {
 }
 
 type vcsGrant struct {
-	URL     string            `json:"url"`
-	Method  string            `json:"method"`
-	Headers map[string]string `json:"headers"`
+	URL     string
+	Method  string
+	Headers map[string]string
+}
+
+// rawGrant accepts the grant at the top level or wrapped ({"grant": {...}}),
+// with header values as a string or a list of strings.
+type rawGrant struct {
+	URL     string                     `json:"url"`
+	Method  string                     `json:"method"`
+	Headers map[string]json.RawMessage `json:"headers"`
+	Grant   *rawGrant                  `json:"grant"`
+	Data    *rawGrant                  `json:"data"`
+}
+
+func (g *rawGrant) flatten() *vcsGrant {
+	for _, inner := range []*rawGrant{g.Grant, g.Data} {
+		if g.URL == "" && inner != nil {
+			return inner.flatten()
+		}
+	}
+	out := &vcsGrant{URL: g.URL, Method: strings.ToUpper(g.Method), Headers: map[string]string{}}
+	for k, raw := range g.Headers {
+		var one string
+		var many []string
+		switch {
+		case json.Unmarshal(raw, &one) == nil:
+			out.Headers[k] = one
+		case json.Unmarshal(raw, &many) == nil && len(many) > 0:
+			out.Headers[k] = strings.Join(many, ", ")
+		}
+	}
+	return out
+}
+
+// StorageError carries what went wrong without any signed URL or token.
+type StorageError struct {
+	Step   string // grant-upload, put, grant-download, get, grant-delete, delete
+	Status int    // HTTP status (0 = no response)
+	Code   string // error code from the VCS signer, when it sent one
+	Err    error
+}
+
+func (e *StorageError) Error() string {
+	msg := fmt.Sprintf("vcs storage %s: status %d", e.Step, e.Status)
+	if e.Code != "" {
+		msg += " (" + e.Code + ")"
+	}
+	if e.Err != nil {
+		msg += ": " + e.Err.Error()
+	}
+	return msg
+}
+
+func (e *StorageError) Unwrap() error { return e.Err }
+
+// signerCode pulls a short error code/message from the signer's JSON error body.
+func signerCode(body []byte) string {
+	var b struct {
+		Code    string `json:"code"`
+		Error   any    `json:"error"`
+		Message string `json:"message"`
+	}
+	if json.Unmarshal(body, &b) != nil {
+		return ""
+	}
+	code := b.Code
+	switch e := b.Error.(type) {
+	case string:
+		if code == "" {
+			code = e
+		}
+	case map[string]any:
+		if c, ok := e["code"].(string); ok && code == "" {
+			code = c
+		}
+	}
+	if code == "" {
+		code = b.Message
+	}
+	if len(code) > 80 {
+		code = code[:80]
+	}
+	return code
 }
 
 // grant asks the signer for one operation. Signed URLs are never logged or stored.
 func (v *VCS) grant(ctx context.Context, req map[string]any) (*vcsGrant, error) {
+	step := "grant-" + fmt.Sprint(req["action"])
 	body, _ := json.Marshal(req)
 	r, err := http.NewRequestWithContext(ctx, http.MethodPost, v.url, bytes.NewReader(body))
 	if err != nil {
-		return nil, err
+		return nil, &StorageError{Step: step, Err: err}
 	}
 	r.Header.Set("Authorization", "Bearer "+v.token)
 	r.Header.Set("Content-Type", "application/json")
+	r.Header.Set("Accept", "application/json")
 	res, err := v.client.Do(r)
 	if err != nil {
-		return nil, fmt.Errorf("vcs storage: %w", err)
+		return nil, &StorageError{Step: step, Err: errors.New("signer unreachable")}
 	}
 	defer res.Body.Close()
-	if res.StatusCode != http.StatusOK && res.StatusCode != http.StatusCreated {
-		return nil, fmt.Errorf("vcs storage %s: status %d", req["action"], res.StatusCode)
+	raw, _ := io.ReadAll(io.LimitReader(res.Body, 1<<16))
+	if res.StatusCode/100 != 2 {
+		return nil, &StorageError{Step: step, Status: res.StatusCode, Code: signerCode(raw)}
 	}
-	var g vcsGrant
-	if err := json.NewDecoder(io.LimitReader(res.Body, 1<<16)).Decode(&g); err != nil || g.URL == "" {
-		return nil, fmt.Errorf("vcs storage %s: bad grant", req["action"])
+	var rg rawGrant
+	if err := json.Unmarshal(raw, &rg); err != nil {
+		return nil, &StorageError{Step: step, Status: res.StatusCode, Err: errors.New("grant is not JSON")}
+	}
+	g := rg.flatten()
+	if g.URL == "" {
+		return nil, &StorageError{Step: step, Status: res.StatusCode, Err: errors.New("grant has no url")}
 	}
 	if g.Method == "" {
 		g.Method = map[string]string{"upload": http.MethodPut, "download": http.MethodGet, "delete": http.MethodDelete}[fmt.Sprint(req["action"])]
 	}
-	return &g, nil
+	return g, nil
 }
 
 func (v *VCS) do(ctx context.Context, g *vcsGrant, body []byte) (*http.Response, error) {
@@ -79,6 +180,9 @@ func (v *VCS) do(ctx context.Context, g *vcsGrant, body []byte) (*http.Response,
 		return nil, err
 	}
 	for k, val := range g.Headers {
+		if strings.EqualFold(k, "host") || strings.EqualFold(k, "content-length") {
+			continue // set by the HTTP client itself
+		}
 		r.Header.Set(k, val)
 	}
 	if body != nil {
@@ -101,18 +205,23 @@ func (v *VCS) Put(ctx context.Context, data []byte, ext, owner string) (string, 
 		return "", err
 	}
 	g, err := v.grant(ctx, map[string]any{"action": "upload", "key": vcsPrefix + key, "size": len(sealed),
-		"content_type": "application/octet-stream"})
+		"content_type": uploadContentType})
 	if err != nil {
 		return "", err
 	}
+	// The signed URL is bound to this content type; send it even when the
+	// grant does not list it, or the bucket rejects the signature.
+	if !hasHeader(g.Headers, "content-type") {
+		g.Headers["Content-Type"] = uploadContentType
+	}
 	res, err := v.do(ctx, g, sealed)
 	if err != nil {
-		return "", fmt.Errorf("vcs storage upload: %w", err)
+		return "", &StorageError{Step: "put", Err: errors.New("bucket unreachable")}
 	}
-	_, _ = io.Copy(io.Discard, res.Body)
+	_, _ = io.Copy(io.Discard, io.LimitReader(res.Body, 1<<16))
 	res.Body.Close()
 	if res.StatusCode/100 != 2 {
-		return "", fmt.Errorf("vcs storage upload: status %d", res.StatusCode)
+		return "", &StorageError{Step: "put", Status: res.StatusCode}
 	}
 	return key, nil
 }
@@ -127,14 +236,14 @@ func (v *VCS) Get(ctx context.Context, key, owner string) ([]byte, error) {
 	}
 	res, err := v.do(ctx, g, nil)
 	if err != nil {
-		return nil, fmt.Errorf("vcs storage download: %w", err)
+		return nil, &StorageError{Step: "get", Err: errors.New("bucket unreachable")}
 	}
 	defer res.Body.Close()
 	if res.StatusCode == http.StatusNotFound {
 		return nil, ErrNotFound
 	}
 	if res.StatusCode/100 != 2 {
-		return nil, fmt.Errorf("vcs storage download: status %d", res.StatusCode)
+		return nil, &StorageError{Step: "get", Status: res.StatusCode}
 	}
 	sealed, err := io.ReadAll(io.LimitReader(res.Body, 64<<20))
 	if err != nil {
@@ -153,11 +262,11 @@ func (v *VCS) Delete(ctx context.Context, key string) error {
 	}
 	res, err := v.do(ctx, g, nil)
 	if err != nil {
-		return err
+		return &StorageError{Step: "delete", Err: errors.New("bucket unreachable")}
 	}
 	res.Body.Close()
 	if res.StatusCode/100 != 2 && res.StatusCode != http.StatusNotFound {
-		return fmt.Errorf("vcs storage delete: status %d", res.StatusCode)
+		return &StorageError{Step: "delete", Status: res.StatusCode}
 	}
 	return nil
 }
